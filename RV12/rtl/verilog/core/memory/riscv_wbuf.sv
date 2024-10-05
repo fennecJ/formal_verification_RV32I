@@ -27,7 +27,7 @@
 //                                                                 //
 /////////////////////////////////////////////////////////////////////
 
-
+import biu_constants_pkg::*;
 module riscv_wbuf #(
   parameter XLEN  = 32,
   parameter DEPTH = 8
