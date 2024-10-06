@@ -26,7 +26,7 @@ set CheckInstValidAssume 0
 
 # setup MACRO for corresponding check flag
 set CheckInstValidAssume [expr {$CheckInstValidAssume == 1 ? "+define+CheckInstValidAssume ": ""}]
-set ANALYZE_FILE "analyze -sv isa.sv "
+set ANALYZE_FILE "analyze -sv property/isa.sv "
 set ANALYZE_COMMAND \
 $ANALYZE_FILE$CheckInstValidAssume
 # include assertion property with MACROS

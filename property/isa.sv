@@ -1,4 +1,4 @@
-`include "./RV12/rtl/verilog/core/riscv_core.sv"
+`include "../RV12/rtl/verilog/core/riscv_core.sv"
 typedef enum logic [6:0] {
     OPC_R     = 7'b0110011,  // R type inst
     OPC_I     = 7'b0010011,  // ADDI, XORI, ORI, ANDI, SLLI, SRLI, SRAI, SLTI, SLTIU

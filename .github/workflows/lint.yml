@@ -1,0 +1,30 @@
+name: Verible linter
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  checks: write
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@main
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    - uses: chipsalliance/verible-linter-action@main
+      with:
+        paths: |
+          ./property
+        exclude_paths: |
+          ./RV12
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        config_file: './.verible.rules'
+        fail_on_error: 'true'
+        extra_args: "--waiver_files=.verible.waiver"
