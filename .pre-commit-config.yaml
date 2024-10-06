@@ -1,0 +1,18 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+exclude: "RV12/.*" # original src code shouldn't be changed
+repos:
+  - repo: local
+    hooks:
+      - id: verible-lint
+        name: Verible verilog format
+        entry: verible-verilog-lint
+        language: system # this is important: it means that pre-commit assumes that the binary is available in the system. That's why we installed in the pre-commit action
+        types_or: [verilog, system-verilog]
+        args: [--rules_config=.verible.rules]
+      - id: verible-format
+        name: Verible verilog formatting
+        entry: verible-verilog-format
+        language: system
+        types_or: [verilog, system-verilog]
+        args: [--inplace, --flagfile=.verible-format-flags]
