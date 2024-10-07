@@ -46,4 +46,29 @@ This project also uses `pre-commit` to enforce code standards. Follow these step
    pre-commit install
    ```
 
-Now you're ready to contribute!
+### Formatting and Linting Before Committing
+
+Before committing your changes, ensure your code is properly formatted and free of linting issues by running the following commands:
+
+1. To format the source code, run:
+   ```bash
+   verible-verilog-format --flagfile=.verible-format-flags --inplace property/isa.sv
+   ```
+
+2. To check for linting issues, run:
+   ```bash
+   verible-verilog-lint --rules_config=.verible.rules property/isa.sv
+   # There should be no output if no linting issues are found.
+   ```
+
+Once these steps are complete and there are no issues, you're ready to contribute!
+
+### Disabling Format for Specific Code Blocks
+
+If you prefer to retain your custom code style in certain sections, you can instruct the formatter to ignore specific code blocks by using the following annotations:
+
+```verilog
+// verilog_format: off
+// Your custom code here...
+// verilog_format: on
+```
