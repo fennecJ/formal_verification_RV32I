@@ -47,6 +47,8 @@ function static rv32i_inst_t decode(input logic [31:0] inst);
     return rv32i_decoded;
 endfunction : decode
 
+typedef struct packed {logic [31:0] inst;} pipeline_info_t;
+
 typedef enum logic [9:0] {  // {funct7, funct3}
     ADD  = {7'b0000000, 3'b000},
     SUB  = {7'b0100000, 3'b000},
@@ -126,16 +128,74 @@ endfunction
 
 logic [31:0] if_inst;
 
+//pipeline follower
+
+pipeline_info_t if_pipeline_info;
+pipeline_info_t pd_pipeline_info;
+pipeline_info_t id_pipeline_info;
+pipeline_info_t ex_pipeline_info;
+pipeline_info_t mem_pipeline_info;
+pipeline_info_t wb_pipeline_info;
+logic parcel_valid_buf;  // from imem
+logic if_flush;
+logic pd_flush;
+logic id_flush;
+logic ex_flush;
+logic mem_flush;
+logic wb_flush;
+
+//flushes core
+logic core_pd_flush;
+logic core_bu_flush;
+logic core_st_flush;
+logic core_du_flush;
+logic core_bu_cacheflush;
+
+//stalls core
+logic core_id_stall;
+logic core_pd_stall;
+logic core_ex_stall;
+logic core_mem_stall[MEM_STAGES +1];
+logic core_wb_stall;
+logic core_du_stall;
+logic core_du_stall_if;
+
 module isa (
     input clk,
     input rst
 );
-    assign if_inst = core.if_unit.rv_instr;
+    assign if_inst = core.if_unit.rv_instr;  //! use imem_parcel_i instead?
     rv32i_inst_t rv32i;
 
     always_comb begin
         rv32i = decode(if_inst);
     end
+
+    // imem to if
+    always_ff @(clock) begin
+        parcel_valid_buf <= |(core.imem_parcel_valid_i);
+    end
+    always_comb begin
+        if_flush = core_pd_flush | core_du_flush | (!parcel_valid_buf);  //ignore du ?(debug unit)
+    end
+    always_ff @(clock) begin
+        if (rst) if_pipeline_info.inst <= NOP;
+        else if (if_flush) if_pipeline_info.inst <= NOP;  // send NOP to pd
+        else if (!core_pd_stall) if_pipeline_info.inst <= core.imem_parcel;  //ignore WFI
+    end
+    // if to pd
+    always_comb begin
+        pd_flush = core_bu_flush | core_st_flush;  // branch unit /state control
+    end
+    always_ff @(clock) begin
+        if (rst) pd_pipeline_info.inst <= NOP;
+        else if (pd_flush) pd_pipeline_info.inst <= NOP;  // send NOP to id
+        else if (!core_id_stall) pd_pipeline_info.inst <= if_pipeline_info.inst;
+    end
+    // pd to dc
+    // dc to ex
+    // ex to mem
+    // mem to wb
 
     property CHECK_INST_VALID_ASSUME;
         @(posedge clk) disable iff (rst) if_inst[6:0] == 7'b0110111 ||  // LUI
