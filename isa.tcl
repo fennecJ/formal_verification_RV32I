@@ -21,15 +21,30 @@ analyze -sv [ glob ./RV12/rtl/verilog/core/memory/*.sv]
 analyze -sv [ glob ./RV12/rtl/verilog/ahb3lite/*.sv]
 # analyze -sv [ glob RV12/top/riscv_top.sv]
 
-# set check flag
-set CheckInstValidAssume 0
-
-# setup MACRO for corresponding check flag
-set CheckInstValidAssume [expr {$CheckInstValidAssume == 1 ? "+define+CheckInstValidAssume ": ""}]
 set ANALYZE_FILE "analyze -sv property/isa.sv "
-set ANALYZE_COMMAND \
-$ANALYZE_FILE$CheckInstValidAssume
-# include assertion property with MACROS
+set ANALYZE_COMMAND $ANALYZE_FILE
+
+# Define a function to set check flags and update ANALYZE_COMMAND
+proc setCheckFlag {flagName flagValue} {
+    global ANALYZE_COMMAND
+    # Check the flag value and append the define string to ANALYZE_COMMAND if flagValue is 1
+    if {$flagValue == 1} {
+        set ANALYZE_COMMAND "${ANALYZE_COMMAND}+define+$flagName "
+    }
+}
+
+# set check flag
+setCheckFlag "CheckInstValidAssume" 0
+setCheckFlag "RegFileStable" 0
+setCheckFlag "PipeFollower" 0
+setCheckFlag "ISA_GROUP_A" 0
+    # Following Flag works only when "ISA_GROUP_A" set to 1
+    setCheckFlag "xori" 0
+    setCheckFlag "lb" 0
+    setCheckFlag "blt" 0
+    setCheckFlag "jal" 0
+    setCheckFlag "auipc" 0
+
 eval $ANALYZE_COMMAND
 
 elaborate -top riscv_top_ahb3lite
