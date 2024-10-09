@@ -132,11 +132,13 @@ function static logic is_validInst(input logic [31:0] inst);
 endfunction
 
 logic [31:0] if_inst;
+rv32i_inst_t wb_inst_dc;
 
 //pipeline follower
 
 localparam logic [31:0] NOP = 32'h13;
 
+//inst info
 pipeline_info_t if_pipeline_info;
 pipeline_info_t pd_pipeline_info;
 pipeline_info_t id_pipeline_info;
@@ -147,8 +149,11 @@ logic if_flush;
 logic pd_flush;
 logic id_flush;
 logic ex_flush;
-logic mem_flush;
 logic wb_flush;
+
+//wires for some bubble use reg+wire to implement(ex : id_inst.bubble)
+logic id_bubble_cond;
+logic id_bubble_r;
 
 //flushes core
 logic core_pd_flush;
@@ -173,6 +178,14 @@ module isa (
         rv32i = decode(if_inst);
     end
 
+    always_comb begin
+        wb_inst_dc = decode(wb_pipeline_info.inst);
+    end
+
+    //temp dbg
+    logic [31:0] reg_value = (|(wb_inst_dc.rs1)) ? (core.int_rf.rf[wb_inst_dc.rs1]) : 0;
+    logic [31:0] xori_result = (reg_value) ^ ({20'h0, wb_inst_dc.imm12_i});
+
     // stall and flush
     always_comb begin
         core_pd_flush = core.pd_flush;
@@ -185,6 +198,8 @@ module isa (
         core_mem_stall = core.mem_stall;
         core_wb_stall = core.wb_stall;
     end
+
+    //pipeline follower
     // imem to if
     always_comb begin
         if_flush = core_pd_flush;  //ignore parcel valid(no compressed inst)
@@ -195,7 +210,7 @@ module isa (
     end
     always_ff @(posedge clk) begin
         if (rst) if_pipeline_info.bubble <= 1;
-        else if (if_flush) if_pipeline_info.bubble <= 1;  // send NOP to pd
+        else if (if_flush) if_pipeline_info.bubble <= 1;
         else if (!core_pd_stall) if_pipeline_info.bubble <= core.pd_latch_nxt_pc;  //ignore WFI
     end
     // if to pd
@@ -204,16 +219,96 @@ module isa (
     end
     always_ff @(posedge clk) begin
         if (rst) pd_pipeline_info.inst <= NOP;
-        else if (pd_flush) pd_pipeline_info.inst <= NOP;  // send NOP to id
         else if (!core_id_stall) pd_pipeline_info.inst <= if_pipeline_info.inst;
     end
-    // pd to dc
-    // dc to ex
+    always_ff @(posedge clk) begin
+        if (rst) pd_pipeline_info.bubble <= 1;
+        else if (pd_flush) pd_pipeline_info.bubble <= 1;
+        else if (!core_id_stall) pd_pipeline_info.bubble <= if_pipeline_info.bubble;
+    end
+    // pd to id
+    always_comb begin
+        id_flush = core_bu_flush;  // branch unit /state control
+    end
+    always_comb begin : id_bubble_wire
+        id_bubble_cond = core_ex_stall | core_bu_flush;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) id_pipeline_info.inst <= NOP;
+        else if (!core_ex_stall) id_pipeline_info.inst <= pd_pipeline_info.inst;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) id_bubble_r <= 1;
+        else if (core_bu_flush) id_bubble_r <= 1;
+        // should rewrite core_id_stall(signal for dependency checking)?
+        else if (!core_ex_stall) id_bubble_r <= pd_pipeline_info.bubble | core_id_stall;
+    end
+    always_comb begin
+        id_pipeline_info.bubble = id_bubble_r | id_bubble_cond;
+    end
+    // id to ex
+    always_comb begin
+        ex_flush = core_bu_flush;  // branch unit /state control
+    end
+    always_ff @(posedge clk) begin
+        if (rst) ex_pipeline_info.inst <= NOP;
+        else if (!core_ex_stall) ex_pipeline_info.inst <= id_pipeline_info.inst;
+    end
+    always_comb @(posedge clk) begin
+        ex_pipeline_info.bubble = (core.ex_units.alu_bubble) && (core.ex_units.lsu_bubble) &&
+            (core.ex_units.mul_bubble) && (core.ex_units.div_bubble);
+    end
     // ex to mem
+    always_ff @(posedge clk) begin
+        if (rst) mem_pipeline_info.inst <= NOP;
+        else if (!core_wb_stall) mem_pipeline_info.inst <= ex_pipeline_info.inst;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) mem_pipeline_info.bubble <= 1;
+        else if (!core_wb_stall) mem_pipeline_info.bubble <= ex_pipeline_info.bubble;
+    end
     // mem to wb
+    always_comb begin
+        wb_flush = core_bu_flush;  // branch unit /state control
+    end
+    always_ff @(posedge clk) begin
+        if (rst) wb_pipeline_info.inst <= NOP;
+        else if (!core_wb_stall) wb_pipeline_info.inst <= mem_pipeline_info.inst;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) wb_pipeline_info.bubble <= 1;
+        else if (!core_wb_stall) wb_pipeline_info.bubble <= mem_pipeline_info.bubble;
+    end
+
+    //assertion
     property CHECK_PIPE_IF_TO_PD;
         @(posedge clk) disable iff (rst) (if_pipeline_info.inst == core.if_insn.instr) &&
             (if_pipeline_info.bubble == core.if_insn.bubble);
+    endproperty
+
+    property CHECK_PIPE_PD_TO_ID;
+        @(posedge clk) disable iff (rst) (pd_pipeline_info.inst == core.pd_insn.instr) &&
+            (pd_pipeline_info.bubble == core.pd_insn.bubble);
+    endproperty
+
+    property CHECK_PIPE_ID_TO_EX;
+        @(posedge clk) disable iff (rst) (id_pipeline_info.inst == core.id_insn.instr) &&
+            (id_pipeline_info.bubble == core.id_insn.bubble);
+    endproperty
+
+    property CHECK_PIPE_EX_TO_MEM;
+        @(posedge clk) disable iff (rst) (ex_pipeline_info.inst == core.ex_insn.instr) &&
+            (ex_pipeline_info.bubble == core.ex_insn.bubble);
+    endproperty
+
+    property CHECK_PIPE_MEM_TO_WB;
+        @(posedge clk) disable iff (rst) (mem_pipeline_info.inst == core.mem_insn[0].instr) &&
+            (mem_pipeline_info.bubble == core.mem_insn[0].bubble);
+    endproperty
+
+    property CHECK_PIPE_WB_TO_REG;
+        @(posedge clk) disable iff (rst) (wb_pipeline_info.inst == core.wb_insn.instr) &&
+            (wb_pipeline_info.bubble == core.wb_insn.bubble);
     endproperty
 
     property CHECK_INST_VALID_ASSUME;
@@ -254,12 +349,11 @@ module isa (
     //    only 1 degree of freedom (rd), resulting in O(n) complexity.
     // Therefore, the overall complexity is reduced from O(n^3) to O(n^2).
     property E2E_XORI_PRE_WB;
-        @(posedge clk) disable iff (rst) 1 |-> 1;
-    /* FIXME: */
-    /* After Pipefollower is validated: */
-    /* When the instruction in the WB stage is XORI, the value before the wb mux */
-    /* should be imm ^ rs1. We can exploit function decode easily to get imm value */
-    /* We can use a 32-bit temporary variable gold_xori to store this expected value. */
+        @(posedge clk)
+            disable iff (rst) ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == 3'b100)) &&
+            (!wb_pipeline_info.bubble) && $past(
+            !core_wb_stall
+        ) |-> (core.wb_r == (xori_result));
     endproperty : E2E_XORI_PRE_WB
 
     property E2E_XORI_RD;
@@ -306,12 +400,6 @@ module isa (
     // 1. wb_val == result
     // 2. |->  ##[1: $] reg[rd] should be same as result
 
-
-    // `ifdef CheckPipe
-    IfToPd :
-    assert property (CHECK_PIPE_IF_TO_PD);
-    // `endif
-
 `ifdef CheckInstValidAssume
     instValidCheck :
     assert property (CHECK_INST_VALID_ASSUME);
@@ -324,9 +412,18 @@ module isa (
 `endif  // RegFileStable
 
 `ifdef PipeFollower
-    /* FIXME: validate pipeline follower is follow the design correctly in each cycle */
-    /* Check only IF/PD/ID/EX/MEM/WB */
-    /* PipeFollower should also follow PC for Branch checking */
+    IfToPd :
+    assert property (CHECK_PIPE_IF_TO_PD);
+    PdToId :
+    assert property (CHECK_PIPE_PD_TO_ID);
+    IdToEx :
+    assert property (CHECK_PIPE_ID_TO_EX);
+    ExToMem :
+    assert property (CHECK_PIPE_EX_TO_MEM);
+    MemToWb :
+    assert property (CHECK_PIPE_MEM_TO_WB);
+    WbToReg :
+    assert property (CHECK_PIPE_WB_TO_REG);
 `endif  // PipeFollower
 
 
@@ -357,6 +454,10 @@ module isa (
     jalrSourceAlign :
     assume property
         ((core.ex_units.bu.opcR[4:0] == {5'b11001}) |-> (core.ex_units.bu.opA_i[1:0] == 0));
+
+    dsiableDmemStall :
+    assume property (
+        (core.dmem_ack_i | core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
 endmodule
 
 bind riscv_top_ahb3lite isa isa_i (
