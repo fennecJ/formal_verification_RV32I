@@ -455,7 +455,7 @@ module isa (
     assume property
         ((core.ex_units.bu.opcR[4:0] == {5'b11001}) |-> (core.ex_units.bu.opA_i[1:0] == 0));
 
-    dsiableDmemStall :
+    disableDmemStall :
     assume property (
         (core.dmem_ack_i | core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
 endmodule
