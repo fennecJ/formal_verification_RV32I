@@ -47,6 +47,11 @@ function static rv32i_inst_t decode(input logic [31:0] inst);
     return rv32i_decoded;
 endfunction : decode
 
+typedef struct packed {
+    logic [31:0] inst;
+    logic bubble;
+} pipeline_info_t;
+
 typedef enum logic [9:0] {  // {funct7, funct3}
     ADD  = {7'b0000000, 3'b000},
     SUB  = {7'b0100000, 3'b000},
@@ -111,9 +116,11 @@ function static logic is_validInst(input logic [31:0] inst);
     case (rv32i.opcode)
         OPC_LUI: return 1'b1;
         OPC_AUIPC: return 1'b1;
-        OPC_JAL: return 1'b1;
-        OPC_JALR: return (rv32i.funct3 == 3'b000);
-        OPC_B: return (rv32i.funct3 inside {BEQ, BNE, BLT, BGE, BLTU, BGEU});
+        OPC_JAL: return (rv32i.imm21_j[1:0] == 2'b0);
+        OPC_JALR: return ((rv32i.funct3 == 3'b000) && (rv32i.imm12_i[1:0] == 2'h0));
+        OPC_B:
+        return ((rv32i.funct3 inside {BEQ, BNE, BLT, BGE, BLTU, BGEU} &&
+                 (rv32i.imm13_b[1:0] == 2'h0)));
         OPC_IL: return (funct_comb inside {LB, LH, LW, LBU, LHU});
         OPC_S: return (rv32i.funct3 inside {SB, SH, SW});
         OPC_I: return (funct_comb inside {ADDI, XORI, ORI, ANDI, SLLI, SRLI, SRAI, SLTI, SLTIU});
@@ -125,26 +132,193 @@ function static logic is_validInst(input logic [31:0] inst);
 endfunction
 
 logic [31:0] if_inst;
+rv32i_inst_t wb_inst_dc;
+
+//pipeline follower
+
+localparam logic [31:0] NOP = 32'h13;
+
+//inst info
+pipeline_info_t if_pipeline_info;
+pipeline_info_t pd_pipeline_info;
+pipeline_info_t id_pipeline_info;
+pipeline_info_t ex_pipeline_info;
+pipeline_info_t mem_pipeline_info;
+pipeline_info_t wb_pipeline_info;
+logic if_flush;
+logic pd_flush;
+logic id_flush;
+logic ex_flush;
+logic wb_flush;
+
+//wires for some bubble use reg+wire to implement(ex : id_inst.bubble)
+logic id_bubble_cond;
+logic id_bubble_r;
+
+//flushes core
+logic core_pd_flush;
+logic core_bu_flush;
+logic core_bu_cacheflush;
+
+//stalls core
+logic core_id_stall;
+logic core_pd_stall;
+logic core_ex_stall;
+logic core_mem_stall[2];
+logic core_wb_stall;
 
 module isa (
     input clk,
     input rst
 );
-    assign if_inst = core.if_unit.rv_instr;
+    assign if_inst = core.if_unit.rv_instr;  //! use imem_parcel_i instead?
     rv32i_inst_t rv32i;
 
     always_comb begin
         rv32i = decode(if_inst);
     end
 
+    always_comb begin
+        wb_inst_dc = decode(wb_pipeline_info.inst);
+    end
+
+    //temp dbg
+    logic [31:0] reg_value = (|(wb_inst_dc.rs1)) ? (core.int_rf.rf[wb_inst_dc.rs1]) : 0;
+    logic [31:0] xori_result = (reg_value) ^ ({20'h0, wb_inst_dc.imm12_i});
+
+    // stall and flush
+    always_comb begin
+        core_pd_flush = core.pd_flush;
+        core_bu_flush = core.bu_flush;
+        core_bu_cacheflush = core.bu_cacheflush;
+
+        core_id_stall = core.id_stall;
+        core_pd_stall = core.pd_stall;
+        core_ex_stall = core.ex_stall;
+        core_mem_stall = core.mem_stall;
+        core_wb_stall = core.wb_stall;
+    end
+
+    //pipeline follower
+    // imem to if
+    always_comb begin
+        if_flush = core_pd_flush;  //ignore parcel valid(no compressed inst)
+    end
+    always_ff @(posedge clk) begin
+        if (rst) if_pipeline_info.inst <= NOP;
+        else if (!core_pd_stall) if_pipeline_info.inst <= if_inst;  //ignore WFI
+    end
+    always_ff @(posedge clk) begin
+        if (rst) if_pipeline_info.bubble <= 1;
+        else if (if_flush) if_pipeline_info.bubble <= 1;
+        else if (!core_pd_stall) if_pipeline_info.bubble <= core.pd_latch_nxt_pc;  //ignore WFI
+    end
+    // if to pd
+    always_comb begin
+        pd_flush = core_bu_flush;  // branch unit /state control
+    end
+    always_ff @(posedge clk) begin
+        if (rst) pd_pipeline_info.inst <= NOP;
+        else if (!core_id_stall) pd_pipeline_info.inst <= if_pipeline_info.inst;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) pd_pipeline_info.bubble <= 1;
+        else if (pd_flush) pd_pipeline_info.bubble <= 1;
+        else if (!core_id_stall) pd_pipeline_info.bubble <= if_pipeline_info.bubble;
+    end
+    // pd to id
+    always_comb begin
+        id_flush = core_bu_flush;  // branch unit /state control
+    end
+    always_comb begin : id_bubble_wire
+        id_bubble_cond = core_ex_stall | core_bu_flush;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) id_pipeline_info.inst <= NOP;
+        else if (!core_ex_stall) id_pipeline_info.inst <= pd_pipeline_info.inst;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) id_bubble_r <= 1;
+        else if (core_bu_flush) id_bubble_r <= 1;
+        // should rewrite core_id_stall(signal for dependency checking)?
+        else if (!core_ex_stall) id_bubble_r <= pd_pipeline_info.bubble | core_id_stall;
+    end
+    always_comb begin
+        id_pipeline_info.bubble = id_bubble_r | id_bubble_cond;
+    end
+    // id to ex
+    always_comb begin
+        ex_flush = core_bu_flush;  // branch unit /state control
+    end
+    always_ff @(posedge clk) begin
+        if (rst) ex_pipeline_info.inst <= NOP;
+        else if (!core_ex_stall) ex_pipeline_info.inst <= id_pipeline_info.inst;
+    end
+    always_comb @(posedge clk) begin
+        ex_pipeline_info.bubble = (core.ex_units.alu_bubble) && (core.ex_units.lsu_bubble) &&
+            (core.ex_units.mul_bubble) && (core.ex_units.div_bubble);
+    end
+    // ex to mem
+    always_ff @(posedge clk) begin
+        if (rst) mem_pipeline_info.inst <= NOP;
+        else if (!core_wb_stall) mem_pipeline_info.inst <= ex_pipeline_info.inst;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) mem_pipeline_info.bubble <= 1;
+        else if (!core_wb_stall) mem_pipeline_info.bubble <= ex_pipeline_info.bubble;
+    end
+    // mem to wb
+    always_comb begin
+        wb_flush = core_bu_flush;  // branch unit /state control
+    end
+    always_ff @(posedge clk) begin
+        if (rst) wb_pipeline_info.inst <= NOP;
+        else if (!core_wb_stall) wb_pipeline_info.inst <= mem_pipeline_info.inst;
+    end
+    always_ff @(posedge clk) begin
+        if (rst) wb_pipeline_info.bubble <= 1;
+        else if (!core_wb_stall) wb_pipeline_info.bubble <= mem_pipeline_info.bubble;
+    end
+
+    //assertion
+    property CHECK_PIPE_IF_TO_PD;
+        @(posedge clk) disable iff (rst) (if_pipeline_info.inst == core.if_insn.instr) &&
+            (if_pipeline_info.bubble == core.if_insn.bubble);
+    endproperty
+
+    property CHECK_PIPE_PD_TO_ID;
+        @(posedge clk) disable iff (rst) (pd_pipeline_info.inst == core.pd_insn.instr) &&
+            (pd_pipeline_info.bubble == core.pd_insn.bubble);
+    endproperty
+
+    property CHECK_PIPE_ID_TO_EX;
+        @(posedge clk) disable iff (rst) (id_pipeline_info.inst == core.id_insn.instr) &&
+            (id_pipeline_info.bubble == core.id_insn.bubble);
+    endproperty
+
+    property CHECK_PIPE_EX_TO_MEM;
+        @(posedge clk) disable iff (rst) (ex_pipeline_info.inst == core.ex_insn.instr) &&
+            (ex_pipeline_info.bubble == core.ex_insn.bubble);
+    endproperty
+
+    property CHECK_PIPE_MEM_TO_WB;
+        @(posedge clk) disable iff (rst) (mem_pipeline_info.inst == core.mem_insn[0].instr) &&
+            (mem_pipeline_info.bubble == core.mem_insn[0].bubble);
+    endproperty
+
+    property CHECK_PIPE_WB_TO_REG;
+        @(posedge clk) disable iff (rst) (wb_pipeline_info.inst == core.wb_insn.instr) &&
+            (wb_pipeline_info.bubble == core.wb_insn.bubble);
+    endproperty
+
     property CHECK_INST_VALID_ASSUME;
         @(posedge clk) disable iff (rst) if_inst[6:0] == 7'b0110111 ||  // LUI
         if_inst[6:0] == 7'b0010111 ||  // AUIPC
-        if_inst[6:0] == 7'b1101111 ||  // JAL
-        if_inst[6:0] == 7'b1100111 ||  // JALR
+        (if_inst[6:0] == 7'b1101111) ||  // JAL
+        (if_inst[6:0] == 7'b1100111) ||  // JALR
 
         (if_inst[6:0] == 7'b1100011  // B-type (Branch)
-        && if_inst[14:12] != 3'b010 && if_inst[14:12] != 3'b011) ||
+        && if_inst[14:12] != 3'b010 && if_inst[14:12] != 3'b011 && if_inst[8] == 1'h0) ||
             (if_inst[6:0] == 7'b0000011  // L-type
         && if_inst[14:12] != 3'b011 && if_inst[14:12] != 3'b110 && if_inst[14:12] != 3'b111) ||
             (if_inst[6:0] == 7'b0100011  // S-type
@@ -175,12 +349,11 @@ module isa (
     //    only 1 degree of freedom (rd), resulting in O(n) complexity.
     // Therefore, the overall complexity is reduced from O(n^3) to O(n^2).
     property E2E_XORI_PRE_WB;
-        @(posedge clk) disable iff (rst) 1 |-> 1;
-    /* FIXME: */
-    /* After Pipefollower is validated: */
-    /* When the instruction in the WB stage is XORI, the value before the wb mux */
-    /* should be imm ^ rs1. We can exploit function decode easily to get imm value */
-    /* We can use a 32-bit temporary variable gold_xori to store this expected value. */
+        @(posedge clk)
+            disable iff (rst) ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == 3'b100)) &&
+            (!wb_pipeline_info.bubble) && $past(
+            !core_wb_stall
+        ) |-> (core.wb_r == (xori_result));
     endproperty : E2E_XORI_PRE_WB
 
     property E2E_XORI_RD;
@@ -227,10 +400,6 @@ module isa (
     // 1. wb_val == result
     // 2. |->  ##[1: $] reg[rd] should be same as result
 
-
-
-
-
 `ifdef CheckInstValidAssume
     instValidCheck :
     assert property (CHECK_INST_VALID_ASSUME);
@@ -243,9 +412,18 @@ module isa (
 `endif  // RegFileStable
 
 `ifdef PipeFollower
-    /* FIXME: validate pipeline follower is follow the design correctly in each cycle */
-    /* Check only IF/PD/ID/EX/MEM/WB */
-    /* PipeFollower should also follow PC for Branch checking */
+    IfToPd :
+    assert property (CHECK_PIPE_IF_TO_PD);
+    PdToId :
+    assert property (CHECK_PIPE_PD_TO_ID);
+    IdToEx :
+    assert property (CHECK_PIPE_ID_TO_EX);
+    ExToMem :
+    assert property (CHECK_PIPE_EX_TO_MEM);
+    MemToWb :
+    assert property (CHECK_PIPE_MEM_TO_WB);
+    WbToReg :
+    assert property (CHECK_PIPE_WB_TO_REG);
 `endif  // PipeFollower
 
 
@@ -271,6 +449,15 @@ module isa (
     assume property (instValid);
     no_privilege_change_st_flush :
     assume property (##2 core.id_unit.st_flush_i == 0);
+
+    // mask jalr source to prevent exception
+    jalrSourceAlign :
+    assume property
+        ((core.ex_units.bu.opcR[4:0] == {5'b11001}) |-> (core.ex_units.bu.opA_i[1:0] == 0));
+
+    disableDmemStall :
+    assume property (
+        (core.dmem_ack_i | core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
 endmodule
 
 bind riscv_top_ahb3lite isa isa_i (
