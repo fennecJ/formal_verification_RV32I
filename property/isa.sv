@@ -423,9 +423,48 @@ module isa (
 `endif  // CheckInstValidAssume
 
 `ifdef RegFileStable
-    /* FIXME: reg file's value should be stable in each cycle if it's not rd */
-    // All check for reg[rd] can be simplify to be check rd_idx only
-    // Once we prove reg file itself worked correctly
+    // Import necessary package
+    import riscv_opcodes_pkg::*;
+
+    // DUV's regfile signal
+    logic [31:0] rf          [32];
+    rsd_t        rf_src1_i;
+    rsd_t        rf_src2_i;
+    logic [31:0] rf_src1_q_o;
+    logic [31:0] rf_src2_q_o;
+    rsd_t        rf_dst_i;
+    logic [31:0] rf_dst_d_i;
+    logic        rf_we_i;
+    logic        pd_stall_i;
+    logic        id_stall_i;
+
+    // Probe internal signal from DUV
+    assign rf = core.int_rf.rf;
+    assign rf_src1_i = core.int_rf.rf_src1_i;
+    assign rf_src2_i = core.int_rf.rf_src2_i;
+    assign rf_src1_q_o = core.int_rf.rf_src1_q_o;
+    assign rf_src2_q_o = core.int_rf.rf_src2_q_o;
+    assign rf_dst_i = core.int_rf.rf_dst_i;
+    assign rf_dst_d_i = core.int_rf.rf_dst_d_i;
+    assign rf_we_i = core.int_rf.rf_we_i;
+    assign pd_stall_i = core.int_rf.pd_stall_i;
+    assign id_stall_i = core.int_rf.id_stall_i;
+
+    // Connect signals into assertion modules
+    fv_regfile _fv_regfile (
+        .clk(clk),
+        .rst(rst),
+        .rf(rf),
+        .rf_src1_i(rf_src1_i),
+        .rf_src2_i(rf_src2_i),
+        .rf_src1_q_o(rf_src1_q_o),
+        .rf_src2_q_o(rf_src2_q_o),
+        .rf_dst_i(rf_dst_i),
+        .rf_dst_d_i(rf_dst_d_i),
+        .rf_we_i(rf_we_i),
+        .pd_stall_i(pd_stall_i),
+        .id_stall_i(id_stall_i)
+    );
 `endif  // RegFileStable
 
 `ifdef PipeFollower

@@ -19,6 +19,7 @@ analyze -sv [ glob ./RV12/rtl/verilog/core/cache/*.sv]
 analyze -sv [ glob ./RV12/rtl/verilog/core/mmu/*.sv]
 analyze -sv [ glob ./RV12/rtl/verilog/core/memory/*.sv]
 analyze -sv [ glob ./RV12/rtl/verilog/ahb3lite/*.sv]
+analyze -sv [ glob ./property/fv_regfile.sv]
 # analyze -sv [ glob RV12/top/riscv_top.sv]
 
 set ANALYZE_FILE "analyze -sv property/isa.sv "
