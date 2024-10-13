@@ -41,16 +41,41 @@ module fv_regfile
         |=> $stable(duv_rf);
     endproperty
 
+    /*
+    This property implementation can't test the case :
+    cycle         0|1|2|3|4|5|6
+    pd_stall_i    ‾‾‾|_|‾‾‾‾‾|_
+    id_stall_i    _|‾‾‾‾‾‾‾|___
+    rf_src_i      x|0|x|x|x|x|x
+    rf_src_q_o    x|x|x|x|x|x|0
+                              ^
+            check at this point
+    Note:
+    If we trust the implementation in RV12, it buffers rf_src_i at
+    cycle 2 (!pd_stall), and updates src at cycle 5(!id_stall).
+    To test it better, we can record the stall informations.
+    (Ex: 2-bits stall_buf for PD and ID respectively, but updates
+    id_stall only when it observes that pd_stall has ever been 0.)
+    The other way is to check the rf_src_i won't change if pd_stall_i
+    and the rs_buffer(src1/src2 in RV12) won't change if id_stall_i.
+    But this would become the same as RV12.
+    */
     property x0_produce_0(rsd_t rf_src_i, logic [31:0] rf_src_q_o);
         @(posedge clk) disable iff (rst)
-        ~(pd_stall_i | id_stall_i) && (rf_src_i == zero)
+        ((~pd_stall_i && (rf_src_i == zero)) ##1 (~id_stall_i))
         |=> (rf_src_q_o == 32'd0);
     endproperty
 
+    /*
+    This implementation suffers from similar problem, we can hardly
+    get the rs without record the stll informations.
+    Note :
+    The index in $past(rf[$past(rf_src_i)] is equal to $past(rf_src_i,2)
+    */
     property other_read_correct(rsd_t rf_src_i, logic [31:0] rf_src_q_o);
         @(posedge clk) disable iff (rst)
-        ~(pd_stall_i | id_stall_i) && (rf_src_i != zero)
-        |=> ((rf[$past(rf_src_i)]) == rf_src_q_o);
+        ((~pd_stall_i && (rf_src_i != zero)) ##1 (~id_stall_i))
+        |=> (($past(rf[$past(rf_src_i)])) == rf_src_q_o);
     endproperty
     // verilog_format: on
 

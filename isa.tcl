@@ -36,7 +36,7 @@ proc setCheckFlag {flagName flagValue} {
 
 # set check flag
 setCheckFlag "CheckInstValidAssume" 0
-setCheckFlag "RegFileStable" 0
+setCheckFlag "RegFileStable" 1
 setCheckFlag "PipeFollower" 0
 setCheckFlag "ISA_GROUP_A" 0
     # Following Flag works only when "ISA_GROUP_A" set to 1
