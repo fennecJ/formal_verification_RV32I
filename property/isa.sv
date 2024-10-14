@@ -143,7 +143,7 @@ rv32i_inst_t wb_inst_dc;
 //pipeline follower
 
 localparam logic [31:0] NOP = 32'h13;
-localparam logic [31:0] PC_INIT = 32'h0;
+localparam logic [31:0] PC_INIT = 'h200;
 
 
 //inst info
