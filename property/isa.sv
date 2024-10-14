@@ -49,6 +49,11 @@ endfunction : decode
 
 typedef struct packed {
     logic [31:0] inst;
+    logic [31:0] pc;
+} inst_pc_t;  // {inst, pc}
+
+typedef struct packed {
+    inst_pc_t inst_pc;  // {inst, pc}
     logic bubble;
 } pipeline_info_t;
 
@@ -132,11 +137,14 @@ function static logic is_validInst(input logic [31:0] inst);
 endfunction
 
 logic [31:0] if_inst;
+logic [31:0] if_pc;
 rv32i_inst_t wb_inst_dc;
 
 //pipeline follower
 
 localparam logic [31:0] NOP = 32'h13;
+localparam logic [31:0] PC_INIT = 'h200;
+
 
 //inst info
 pipeline_info_t if_pipeline_info;
@@ -172,6 +180,15 @@ module isa (
     input rst
 );
     assign if_inst = core.if_unit.rv_instr;  //! use imem_parcel_i instead?
+
+    // Directly follow the logic in core.if_unit
+    always_comb begin
+        if (rst) if_pc = PC_INIT;
+        else if (core.if_unit.du_we_pc_strb) if_pc = core.if_unit.du_dato_i;
+        else if (!core.if_unit.pd_stall_i && !core.if_unit.du_stall_i) begin
+            if_pc = core.if_unit.if_nxt_pc_o;
+        end else if_pc = core.if_unit.if_pc_o;  // remain unchanged
+    end
     rv32i_inst_t rv32i;
 
     always_comb begin
@@ -179,7 +196,7 @@ module isa (
     end
 
     always_comb begin
-        wb_inst_dc = decode(wb_pipeline_info.inst);
+        wb_inst_dc = decode(wb_pipeline_info.inst_pc.inst);
     end
 
     //temp dbg
@@ -205,8 +222,8 @@ module isa (
         if_flush = core_pd_flush;  //ignore parcel valid(no compressed inst)
     end
     always_ff @(posedge clk) begin
-        if (rst) if_pipeline_info.inst <= NOP;
-        else if (!core_pd_stall) if_pipeline_info.inst <= if_inst;  //ignore WFI
+        if (rst) if_pipeline_info.inst_pc <= {NOP, PC_INIT};
+        else if (!core_pd_stall) if_pipeline_info.inst_pc <= {if_inst, if_pc};  //ignore WFI
     end
     always_ff @(posedge clk) begin
         if (rst) if_pipeline_info.bubble <= 1;
@@ -218,8 +235,8 @@ module isa (
         pd_flush = core_bu_flush;  // branch unit /state control
     end
     always_ff @(posedge clk) begin
-        if (rst) pd_pipeline_info.inst <= NOP;
-        else if (!core_id_stall) pd_pipeline_info.inst <= if_pipeline_info.inst;
+        if (rst) pd_pipeline_info.inst_pc <= {NOP, PC_INIT};
+        else if (!core_id_stall) pd_pipeline_info.inst_pc <= if_pipeline_info.inst_pc;
     end
     always_ff @(posedge clk) begin
         if (rst) pd_pipeline_info.bubble <= 1;
@@ -234,8 +251,8 @@ module isa (
         id_bubble_cond = core_ex_stall | core_bu_flush;
     end
     always_ff @(posedge clk) begin
-        if (rst) id_pipeline_info.inst <= NOP;
-        else if (!core_ex_stall) id_pipeline_info.inst <= pd_pipeline_info.inst;
+        if (rst) id_pipeline_info.inst_pc <= {NOP, PC_INIT};
+        else if (!core_ex_stall) id_pipeline_info.inst_pc <= pd_pipeline_info.inst_pc;
     end
     always_ff @(posedge clk) begin
         if (rst) id_bubble_r <= 1;
@@ -251,8 +268,8 @@ module isa (
         ex_flush = core_bu_flush;  // branch unit /state control
     end
     always_ff @(posedge clk) begin
-        if (rst) ex_pipeline_info.inst <= NOP;
-        else if (!core_ex_stall) ex_pipeline_info.inst <= id_pipeline_info.inst;
+        if (rst) ex_pipeline_info.inst_pc <= {NOP, PC_INIT};
+        else if (!core_ex_stall) ex_pipeline_info.inst_pc <= id_pipeline_info.inst_pc;
     end
     always_comb @(posedge clk) begin
         ex_pipeline_info.bubble = (core.ex_units.alu_bubble) && (core.ex_units.lsu_bubble) &&
@@ -260,8 +277,8 @@ module isa (
     end
     // ex to mem
     always_ff @(posedge clk) begin
-        if (rst) mem_pipeline_info.inst <= NOP;
-        else if (!core_wb_stall) mem_pipeline_info.inst <= ex_pipeline_info.inst;
+        if (rst) mem_pipeline_info.inst_pc <= {NOP, PC_INIT};
+        else if (!core_wb_stall) mem_pipeline_info.inst_pc <= ex_pipeline_info.inst_pc;
     end
     always_ff @(posedge clk) begin
         if (rst) mem_pipeline_info.bubble <= 1;
@@ -272,8 +289,8 @@ module isa (
         wb_flush = core_bu_flush;  // branch unit /state control
     end
     always_ff @(posedge clk) begin
-        if (rst) wb_pipeline_info.inst <= NOP;
-        else if (!core_wb_stall) wb_pipeline_info.inst <= mem_pipeline_info.inst;
+        if (rst) wb_pipeline_info.inst_pc <= {NOP, PC_INIT};
+        else if (!core_wb_stall) wb_pipeline_info.inst_pc <= mem_pipeline_info.inst_pc;
     end
     always_ff @(posedge clk) begin
         if (rst) wb_pipeline_info.bubble <= 1;
@@ -282,32 +299,32 @@ module isa (
 
     //assertion
     property CHECK_PIPE_IF_TO_PD;
-        @(posedge clk) disable iff (rst) (if_pipeline_info.inst == core.if_insn.instr) &&
+        @(posedge clk) disable iff (rst) (if_pipeline_info.inst_pc.inst == core.if_insn.instr) &&
             (if_pipeline_info.bubble == core.if_insn.bubble);
     endproperty
 
     property CHECK_PIPE_PD_TO_ID;
-        @(posedge clk) disable iff (rst) (pd_pipeline_info.inst == core.pd_insn.instr) &&
+        @(posedge clk) disable iff (rst) (pd_pipeline_info.inst_pc.inst == core.pd_insn.instr) &&
             (pd_pipeline_info.bubble == core.pd_insn.bubble);
     endproperty
 
     property CHECK_PIPE_ID_TO_EX;
-        @(posedge clk) disable iff (rst) (id_pipeline_info.inst == core.id_insn.instr) &&
+        @(posedge clk) disable iff (rst) (id_pipeline_info.inst_pc.inst == core.id_insn.instr) &&
             (id_pipeline_info.bubble == core.id_insn.bubble);
     endproperty
 
     property CHECK_PIPE_EX_TO_MEM;
-        @(posedge clk) disable iff (rst) (ex_pipeline_info.inst == core.ex_insn.instr) &&
+        @(posedge clk) disable iff (rst) (ex_pipeline_info.inst_pc.inst == core.ex_insn.instr) &&
             (ex_pipeline_info.bubble == core.ex_insn.bubble);
     endproperty
 
     property CHECK_PIPE_MEM_TO_WB;
-        @(posedge clk) disable iff (rst) (mem_pipeline_info.inst == core.mem_insn[0].instr) &&
-            (mem_pipeline_info.bubble == core.mem_insn[0].bubble);
+        @(posedge clk) disable iff (rst) (mem_pipeline_info.inst_pc.inst == core.mem_insn[0].instr)
+            && (mem_pipeline_info.bubble == core.mem_insn[0].bubble);
     endproperty
 
     property CHECK_PIPE_WB_TO_REG;
-        @(posedge clk) disable iff (rst) (wb_pipeline_info.inst == core.wb_insn.instr) &&
+        @(posedge clk) disable iff (rst) (wb_pipeline_info.inst_pc.inst == core.wb_insn.instr) &&
             (wb_pipeline_info.bubble == core.wb_insn.bubble);
     endproperty
 
@@ -458,6 +475,11 @@ module isa (
     disableDmemStall :
     assume property (
         (core.dmem_ack_i | core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
+
+    pcAlign :
+    assume property ((core.if_pc[1:0] | core.pd_pc[1:0] | core.id_pc[1:0] | core.ex_pc[1:0] |
+                      core.mem_pc[0][1:0] | core.wb_pc[1:0]) == 2'b0);
+
 endmodule
 
 bind riscv_top_ahb3lite isa isa_i (
