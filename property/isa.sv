@@ -202,11 +202,35 @@ module isa (
     end
 
     //helper signal in write back stage
+    // xori
     logic [31:0] reg_value = (|(wb_inst_dc.rs1)) ? (core.int_rf.rf[wb_inst_dc.rs1]) : 0;
     logic [31:0] xori_result = (reg_value) ^ ({20'h0, wb_inst_dc.imm12_i});
     logic xori_trigger;
-    assign xori_trigger = ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == 3'b100)) &&
+    assign xori_trigger = ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == XORI)) &&
         (!wb_pipeline_info.bubble) && (!wb_stall_past);
+
+    // LB
+
+    // BLT
+    logic blt_trigger;
+    logic [31:0] blt_non_taken_addr;
+    logic [31:0] blt_taken_addr;
+    logic [31:0] blt_gold_addr;
+    logic blt_taken;
+    logic [31:0] blt_rs1;
+    logic [31:0] blt_rs2;
+    assign blt_rs1 = (|(wb_inst_dc.rs1)) ? (core.int_rf.rf[wb_inst_dc.rs1]) : 0;
+    assign blt_rs2 = (|(wb_inst_dc.rs2)) ? (core.int_rf.rf[wb_inst_dc.rs2]) : 0;
+    assign blt_taken = $signed(blt_rs1) < $signed(blt_rs2);
+    assign blt_trigger = ((wb_inst_dc.opcode == OPC_B) && (wb_inst_dc.funct3 == BLT)) &&
+        (!wb_stall_past) && (!core_wb_stall);
+    assign blt_non_taken_addr = wb_pipeline_info.inst_pc.pc + 32'd4;
+    assign blt_taken_addr = wb_pipeline_info.inst_pc.pc +
+        {{19{wb_inst_dc.imm13_b[12]}}, wb_inst_dc.imm13_b};
+    always_ff @(posedge clk) begin
+        if (blt_trigger) blt_gold_addr <= blt_taken ? blt_taken_addr : blt_non_taken_addr;
+    end
+
 
     // stall and flush
     always_comb begin
@@ -221,7 +245,7 @@ module isa (
         core_wb_stall = core.wb_stall;
     end
 
-    always @(posedge clk) begin
+    always_ff @(posedge clk) begin
         wb_stall_past <= core_wb_stall;
     end
 
@@ -393,6 +417,11 @@ module isa (
     // check for addr end with 0, 1, 2, 3 to be [34, 12, cd, ab]
     // respectively
 
+    property E2E_BLT;
+        @(posedge clk) disable iff (rst)
+            blt_trigger |-> ##[1:20] wb_pipeline_info.inst_pc.pc == blt_gold_addr;
+    endproperty : E2E_BLT
+
     // FIXME:
     // For BLT:
     // Add extra assume to ensure branch target is aligned to 4 (assume inst[8] = 0)
@@ -455,6 +484,12 @@ module isa (
     e2e_xori_pre_wb :
     assert property (E2E_XORI_PRE_WB);
 `endif  // xori
+
+`ifdef blt
+    e2e_blt :
+    assert property (E2E_BLT);
+`endif  // blt
+
 `endif  // ISA_GROUP_A
 
 
