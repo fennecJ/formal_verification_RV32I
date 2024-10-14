@@ -175,6 +175,8 @@ logic core_ex_stall;
 logic core_mem_stall[2];
 logic core_wb_stall;
 
+logic wb_stall_past;
+
 module isa (
     input clk,
     input rst
@@ -199,9 +201,12 @@ module isa (
         wb_inst_dc = decode(wb_pipeline_info.inst_pc.inst);
     end
 
-    //temp dbg
+    //helper signal in write back stage
     logic [31:0] reg_value = (|(wb_inst_dc.rs1)) ? (core.int_rf.rf[wb_inst_dc.rs1]) : 0;
     logic [31:0] xori_result = (reg_value) ^ ({20'h0, wb_inst_dc.imm12_i});
+    logic xori_trigger;
+    assign xori_trigger = ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == 3'b100)) &&
+        (!wb_pipeline_info.bubble) && (!wb_stall_past);
 
     // stall and flush
     always_comb begin
@@ -215,6 +220,11 @@ module isa (
         core_mem_stall = core.mem_stall;
         core_wb_stall = core.wb_stall;
     end
+
+    always @(posedge clk) begin
+        wb_stall_past <= core_wb_stall;
+    end
+
 
     //pipeline follower
     // imem to if
@@ -366,19 +376,11 @@ module isa (
     //    only 1 degree of freedom (rd), resulting in O(n) complexity.
     // Therefore, the overall complexity is reduced from O(n^3) to O(n^2).
     property E2E_XORI_PRE_WB;
-        @(posedge clk)
-            disable iff (rst) ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == 3'b100)) &&
-            (!wb_pipeline_info.bubble) && $past(
-            !core_wb_stall
-        ) |-> (core.wb_r == (xori_result));
+        @(posedge clk) disable iff (rst) xori_trigger |-> (core.wb_r == (xori_result));
     endproperty : E2E_XORI_PRE_WB
 
     property E2E_XORI_RD;
-        @(posedge clk) disable iff (rst) 1 |-> 1;
-    /* FIXME: */
-    /* After Pipefollower is validated: */
-    /* When the instruction in the WB stage is XORI, */
-    /* reg[rd] should equal the gold_xori value mentioned above. */
+        @(posedge clk) disable iff (rst) xori_trigger |-> (core.wb_dst == wb_inst_dc.rd);
     endproperty : E2E_XORI_RD
 
 
