@@ -180,7 +180,15 @@ module isa (
     input rst
 );
     assign if_inst = core.if_unit.rv_instr;  //! use imem_parcel_i instead?
-    assign if_pc   = core.if_unit.if_pc_o;
+
+    // Directly follow the logic in core.if_unit
+    always_comb begin
+        if (rst) if_pc = PC_INIT;
+        else if (core.if_unit.du_we_pc_strb) if_pc = core.if_unit.du_dato_i;
+        else if (!core.if_unit.pd_stall_i && !core.if_unit.du_stall_i) begin
+            if_pc = core.if_unit.if_nxt_pc_o;
+        end else if_pc = core.if_unit.if_pc_o;  // remain unchanged
+    end
     rv32i_inst_t rv32i;
 
     always_comb begin
@@ -467,6 +475,11 @@ module isa (
     disableDmemStall :
     assume property (
         (core.dmem_ack_i | core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
+
+    pcAlign :
+    assume property ((core.if_pc[1:0] | core.pd_pc[1:0] | core.id_pc[1:0] | core.ex_pc[1:0] |
+                      core.mem_pc[0][1:0] | core.wb_pc[1:0]) == 2'b0);
+
 endmodule
 
 bind riscv_top_ahb3lite isa isa_i (
