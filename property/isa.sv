@@ -26,6 +26,7 @@ typedef struct packed {
     logic [11:0] imm12_s;  // S-type 12bits imm
     logic [20:0] imm21_j;  // J-type 21bits imm
     logic [12:0] imm13_b;  // B-type 13bits imm
+    logic [19:0] uimm_20;  // lui/auipc 20bits uimm
     // FIXME: Add sign extended field if needed
 } rv32i_inst_t;
 
@@ -44,6 +45,7 @@ function static rv32i_inst_t decode(input logic [31:0] inst);
     rv32i_decoded.imm12_s = {inst[31:25], inst[11:7]};
     rv32i_decoded.imm21_j = {inst[31], inst[19:12], inst[20], inst[30:21], 1'b0};
     rv32i_decoded.imm13_b = {inst[31], inst[7], inst[30:25], inst[11:8], 1'b0};
+    rv32i_decoded.uimm_20 = inst[31:12];
     return rv32i_decoded;
 endfunction : decode
 
@@ -212,6 +214,7 @@ module isa (
     // LB
 
     // BLT
+    // FIXME: BLT current cannot pass assertion
     logic blt_trigger;
     logic [31:0] blt_non_taken_addr;
     logic [31:0] blt_taken_addr;
@@ -231,6 +234,18 @@ module isa (
         if (blt_trigger) blt_gold_addr <= blt_taken ? blt_taken_addr : blt_non_taken_addr;
     end
 
+    // JAL
+
+    // AUIPC
+    logic auipc_trigger;
+    logic [31:0] auipc_uimm;
+    logic [31:0] auipc_gold_res;
+    assign auipc_uimm = {wb_inst_dc.uimm_20, 12'b0};
+    assign auipc_gold_res = auipc_uimm + wb_pipeline_info.inst_pc.pc;
+    // bubble indicate current inst has value to write back to regfile
+    // FIXME: Why auipc's trigger no need to check wb_stall_past? Is that because we don't look up
+    // regfile's data when calculate gold_res?
+    assign auipc_trigger = (wb_inst_dc.opcode == OPC_AUIPC) && (!wb_pipeline_info.bubble);
 
     // stall and flush
     always_comb begin
@@ -440,13 +455,19 @@ module isa (
     // result to be write back should be WB's pc + 4
     // |->  ##[1: $] reg[rd] should be same as result
 
-    // FIXME:
     // For AUIPC
     // When the instruction in the WB staged is AUIPC
     // Let result to be WB's pc + inst.uimm12
     // check following:
     // 1. wb_val == result
     // 2. |->  ##[1: $] reg[rd] should be same as result
+    property E2E_AUIPC_PRE_WB;
+        @(posedge clk) disable iff (rst) auipc_trigger |-> (core.wb_r == (auipc_gold_res));
+    endproperty : E2E_AUIPC_PRE_WB
+
+    property E2E_AUIPC_RD;
+        @(posedge clk) disable iff (rst) auipc_trigger |-> (core.wb_dst == wb_inst_dc.rd);
+    endproperty : E2E_AUIPC_RD
 
 `ifdef CheckInstValidAssume
     instValidCheck :
@@ -489,6 +510,14 @@ module isa (
     e2e_blt :
     assert property (E2E_BLT);
 `endif  // blt
+
+`ifdef auipc
+    e2e_auipc_pre_wb :
+    assert property (E2E_AUIPC_PRE_WB);
+
+    e2e_auipc_rd :
+    assert property (E2E_AUIPC_RD);
+`endif  // auipc
 
 `endif  // ISA_GROUP_A
 
