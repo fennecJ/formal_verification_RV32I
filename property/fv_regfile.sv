@@ -27,6 +27,10 @@ module fv_regfile
     input              pd_stall_i,
     id_stall_i
 );
+    //////////////////// Property $ Sequence ////////////////////
+    sequence value_0_flow_out(rsd_t rf_src_i);
+        (~pd_stall_i && (rf_src_i == zero)) ##1 id_stall_i ##[0:$] ~id_stall_i;
+    endsequence
     //////////////////// Assertion ////////////////////
     // verilog_format: off
     property write_correct(logic [31:0] duv_rf, rsd_t rf_dst, logic [4:0] rf_index);
@@ -43,8 +47,7 @@ module fv_regfile
 
     property x0_produce_0(rsd_t rf_src_i, logic [31:0] rf_src_q_o);
         @(posedge clk) disable iff (rst)
-        ~(pd_stall_i | id_stall_i) && (rf_src_i == zero)
-        |=> (rf_src_q_o == 32'd0);
+        value_0_flow_out(rf_src_i) |=> (rf_src_q_o == 32'd0);
     endproperty
 
     property other_read_correct(rsd_t rf_src_i, logic [31:0] rf_src_q_o);
