@@ -27,12 +27,60 @@ module fv_regfile
     input              pd_stall_i,
     id_stall_i
 );
-    //////////////////// Property $ Sequence ////////////////////
-    sequence value_0_flow_out(rsd_t rf_src_i);
-        (~pd_stall_i && (rf_src_i == zero)) ##1 id_stall_i ##[0:$] ~id_stall_i;
-    endsequence
-    //////////////////// Assertion ////////////////////
+    //////////////////// Glue Logic ////////////////////
+    rsd_t sampled_src1, sampled_src2;
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            sampled_src1 <= zero;
+            sampled_src2 <= zero;
+        end else begin
+            if (~pd_stall_i) begin
+                sampled_src1 <= rf_src1_i;
+                sampled_src2 <= rf_src2_i;
+            end
+        end
+    end
+
+    //////////////////// Property & Sequence ////////////////////
     // verilog_format: off
+    // Check ~id_stall_i existence when read x0
+    sequence not_id_stall_immediately_when_read_x0(rsd_t rf_src_i);
+        ~id_stall_i && (rf_src_i == zero);
+    endsequence
+
+    sequence not_id_stall_eventually_when_read_x0(rsd_t rf_src_i);
+        id_stall_i ##[1:$] (~id_stall_i && (rf_src_i == zero));
+    endsequence
+
+    sequence not_id_stall_exist_when_read_x0(rsd_t rf_src_i);
+        not_id_stall_immediately_when_read_x0(rf_src_i)
+        or not_id_stall_eventually_when_read_x0(rf_src_i);
+    endsequence
+
+    // Check ~id_stall_i existence when read x1 ~ x31
+    sequence not_id_stall_immediately_when_read_others(rsd_t rf_src_i);
+        ~id_stall_i && (rf_src_i != zero);
+    endsequence
+
+    sequence not_id_stall_eventually_when_read_others(rsd_t rf_src_i);
+        id_stall_i ##[1:$] (~id_stall_i && (rf_src_i != zero));
+    endsequence
+
+    sequence not_id_stall_exist_when_read_others(rsd_t rf_src_i);
+        not_id_stall_immediately_when_read_others(rf_src_i)
+        or not_id_stall_eventually_when_read_others(rf_src_i);
+    endsequence
+
+    // Final precondition
+    sequence read_value_0(rsd_t rf_src_i);
+        ~pd_stall_i ##1 not_id_stall_exist_when_read_x0(rf_src_i);
+    endsequence
+
+    sequence read_value_others(rsd_t rf_src_i);
+        ~pd_stall_i ##1 not_id_stall_exist_when_read_others(rf_src_i);
+    endsequence
+
+    //////////////////// Assertion ////////////////////
     property write_correct(logic [31:0] duv_rf, rsd_t rf_dst, logic [4:0] rf_index);
         @(posedge clk) disable iff (rst)
         ~(pd_stall_i | id_stall_i) && (rf_dst == rf_index) && rf_we_i
@@ -47,27 +95,26 @@ module fv_regfile
 
     property x0_produce_0(rsd_t rf_src_i, logic [31:0] rf_src_q_o);
         @(posedge clk) disable iff (rst)
-        value_0_flow_out(rf_src_i) |=> (rf_src_q_o == 32'd0);
+        read_value_0(rf_src_i) |=> (rf_src_q_o == 32'd0);
     endproperty
 
     property other_read_correct(rsd_t rf_src_i, logic [31:0] rf_src_q_o);
         @(posedge clk) disable iff (rst)
-        ~(pd_stall_i | id_stall_i) && (rf_src_i != zero)
-        |=> ((rf[$past(rf_src_i)]) == rf_src_q_o);
+        read_value_others(rf_src_i) |=> ( $past(rf[ rf_src_i ]) == rf_src_q_o);
     endproperty
     // verilog_format: on
 
     // x0 will always gives 0
     x0_gives_x0_at_src1 :
-    assert property (x0_produce_0(rf_src1_i, rf_src1_q_o));
+    assert property (x0_produce_0(sampled_src1, rf_src1_q_o));
     x0_gives_x0_at_src2 :
-    assert property (x0_produce_0(rf_src2_i, rf_src2_q_o));
+    assert property (x0_produce_0(sampled_src2, rf_src2_q_o));
 
     // Read Correct
     src1_read_correct :
-    assert property (other_read_correct(rf_src1_i, rf_src1_q_o));
+    assert property (other_read_correct(sampled_src1, rf_src1_q_o));
     src2_read_correct :
-    assert property (other_read_correct(rf_src2_i, rf_src2_q_o));
+    assert property (other_read_correct(sampled_src2, rf_src2_q_o));
 
     // All registers should reflect the written data after write operation
     genvar i;  // genvar
