@@ -44,40 +44,31 @@ module fv_regfile
     //////////////////// Property & Sequence ////////////////////
     // verilog_format: off
     // Check ~id_stall_i existence when read x0
-    sequence not_id_stall_immediately_when_read_x0(rsd_t rf_src_i);
-        ~id_stall_i && (rf_src_i == zero);
+    sequence immediately_not_id_stall_when_read_x0(rsd_t rf_src_i);
+        ~pd_stall_i ##1 (~id_stall_i && (rf_src_i == zero));
     endsequence
 
-    sequence not_id_stall_eventually_when_read_x0(rsd_t rf_src_i);
-        id_stall_i ##[1:$] (~id_stall_i && (rf_src_i == zero));
+    sequence eventually_not_id_stall_when_read_x0(rsd_t rf_src_i);
+        ~pd_stall_i ##1 (id_stall_i[*0:$]) ##1 (~id_stall_i && (rf_src_i == zero));
     endsequence
 
-    sequence not_id_stall_exist_when_read_x0(rsd_t rf_src_i);
-        not_id_stall_immediately_when_read_x0(rf_src_i)
-        or not_id_stall_eventually_when_read_x0(rf_src_i);
+    sequence exist_not_id_stall_when_read_x0(rsd_t rf_src_i);
+        immediately_not_id_stall_when_read_x0(rf_src_i)
+        or eventually_not_id_stall_when_read_x0(rf_src_i);
     endsequence
 
     // Check ~id_stall_i existence when read x1 ~ x31
-    sequence not_id_stall_immediately_when_read_others(rsd_t rf_src_i);
-        ~id_stall_i && (rf_src_i != zero);
+    sequence immediately_not_id_stall_when_read_others(rsd_t rf_src_i);
+        ~pd_stall_i ##1 (~id_stall_i && (rf_src_i != zero));
     endsequence
 
-    sequence not_id_stall_eventually_when_read_others(rsd_t rf_src_i);
-        id_stall_i ##[1:$] (~id_stall_i && (rf_src_i != zero));
+    sequence eventually_not_id_stall_when_read_others(rsd_t rf_src_i);
+        ~pd_stall_i ##1 (id_stall_i[*0:$]) ##1 (~id_stall_i && (rf_src_i != zero));
     endsequence
 
-    sequence not_id_stall_exist_when_read_others(rsd_t rf_src_i);
-        not_id_stall_immediately_when_read_others(rf_src_i)
-        or not_id_stall_eventually_when_read_others(rf_src_i);
-    endsequence
-
-    // Final precondition
-    sequence read_value_0(rsd_t rf_src_i);
-        ~pd_stall_i ##1 not_id_stall_exist_when_read_x0(rf_src_i);
-    endsequence
-
-    sequence read_value_others(rsd_t rf_src_i);
-        ~pd_stall_i ##1 not_id_stall_exist_when_read_others(rf_src_i);
+    sequence exist_not_id_stall_when_read_others(rsd_t rf_src_i);
+        immediately_not_id_stall_when_read_others(rf_src_i)
+        or eventually_not_id_stall_when_read_others(rf_src_i);
     endsequence
 
     //////////////////// Assertion ////////////////////
@@ -95,12 +86,12 @@ module fv_regfile
 
     property x0_produce_0(rsd_t rf_src_i, logic [31:0] rf_src_q_o);
         @(posedge clk) disable iff (rst)
-        read_value_0(rf_src_i) |=> (rf_src_q_o == 32'd0);
+        exist_not_id_stall_when_read_x0(rf_src_i) |=> (rf_src_q_o == 32'd0);
     endproperty
 
     property other_read_correct(rsd_t rf_src_i, logic [31:0] rf_src_q_o);
         @(posedge clk) disable iff (rst)
-        read_value_others(rf_src_i) |=> ( $past(rf[ rf_src_i ]) == rf_src_q_o);
+        exist_not_id_stall_when_read_others(rf_src_i) |=> ( $past(rf[ rf_src_i ]) == rf_src_q_o);
     endproperty
     // verilog_format: on
 
