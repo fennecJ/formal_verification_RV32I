@@ -334,23 +334,13 @@ module isa (
 
     // JAL
     // FIXME: BLT current cannot pass assertion
-    logic jal_trigger;
     logic [31:0] jal_taken_addr;
     logic [31:0] jal_gold_addr;
-    logic had_jal_past;
     logic valid_jal;
     assign valid_jal = (wb_inst_dc.opcode == OPC_JAL) && wb_pipeline_info.inst_valid;
 
-    always_ff @(posedge clk) begin
-        if (rst) had_jal_past <= 1'b0;
-        else if (valid_jal) had_jal_past <= 1'b1;
-        else if (jal_trigger && !valid_jal)  // pull down BLT rec when jal triggered
-            had_jal_past <= 1'b0;
-    end
-
-    assign jal_trigger = had_jal_past && wb_pipeline_info.inst_valid;
     assign jal_taken_addr = wb_pipeline_info.inst_pc.pc +
-        {{11{wb_inst_dc.imm13_b[12]}}, wb_inst_dc.imm21_j};
+        {{11{wb_inst_dc.imm21_j[20]}}, wb_inst_dc.imm21_j};
     always_ff @(posedge clk) begin
         if (valid_jal) jal_gold_addr <= jal_taken_addr;
     end
@@ -621,8 +611,9 @@ module isa (
     // result to be write back should be WB's pc + 4
     // |->  ##[1: $] reg[rd] should be same as result
     property E2E_JAL;
-        @(posedge clk) disable iff (rst) jal_trigger |-> core.wb_pc == jal_gold_addr;
-    // jal_trigger && $next(wb_pipeline_info.inst_valid) |-> wb_pipeline_info.inst_pc.pc == jal_gold_addr;
+        @(posedge clk) disable iff (rst) (valid_jal ##1
+        (!wb_pipeline_info.inst_valid) [* 0: $] ##1
+        (wb_pipeline_info.inst_valid)) |-> core.wb_pc == jal_gold_addr;
     endproperty : E2E_JAL
 
     // For AUIPC
