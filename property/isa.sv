@@ -56,6 +56,7 @@ typedef struct packed {
 
 typedef struct packed {
     inst_pc_t inst_pc;  // {inst, pc}
+    logic inst_valid;
     logic bubble;
 } pipeline_info_t;
 
@@ -109,9 +110,26 @@ typedef enum logic [2:0] {
     BGEU = 3'b111
 } btype_valid_funct3_t;
 
+typedef enum logic [2:0] {
+    // FENCE
+    FENCE   = 3'b000,
+    FENCE_I = 3'b001
+} fence_valid_funct3_t;
+
 function static logic is_valid_E_inst(input logic [31:0] inst);
-    return (inst[31:20] == 12'b0000_0000_000?) && (inst[19:7] == 0);
+    // inst[20] can be either 0 or 1, no need to constraint
+    return (inst[31:21] == 11'b0000_0000_000) && (inst[19:7] == 0);
 endfunction : is_valid_E_inst
+
+function static logic is_valid_FENCE_inst(input logic [31:0] inst);
+    casex (inst)
+        32'b0000????????_00000_000_00000_0001111:  // FENCE.I
+        return 1;
+        32'b000000000000_00000_001_00000_0001111:  // FENCE
+        return 1;
+        default: return 0;
+    endcase
+endfunction : is_valid_FENCE_inst
 
 function static logic is_validInst(input logic [31:0] inst);
     rv32i_inst_t rv32i;
@@ -132,7 +150,7 @@ function static logic is_validInst(input logic [31:0] inst);
         OPC_S: return (rv32i.funct3 inside {SB, SH, SW});
         OPC_I: return (funct_comb inside {ADDI, XORI, ORI, ANDI, SLLI, SRLI, SRAI, SLTI, SLTIU});
         OPC_R: return (funct_comb inside {ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND});
-        OPC_FENCE: return (rv32i.funct3 == 3'b000);  // FENCE, FENCE.TSO, PAUSE
+        OPC_FENCE: return is_valid_FENCE_inst(rv32i.inst);  // FENCE
         OPC_E: return is_valid_E_inst(rv32i.inst);
         default: return 1'b0;
     endcase
@@ -140,6 +158,7 @@ endfunction
 
 logic [31:0] if_inst;
 logic [31:0] if_pc;
+
 rv32i_inst_t wb_inst_dc;
 rv32i_inst_t mem_inst_dc;
 
@@ -180,24 +199,43 @@ module isa (
     input rst
 );
     rv32i_inst_t if_inst_dc;
+    rv32i_inst_t id_inst_dc;
     pipeline_info_t if_pipeline_info;
     pipeline_info_t pd_pipeline_info;
     pipeline_info_t id_pipeline_info;
     pipeline_info_t ex_pipeline_info;
     pipeline_info_t mem_pipeline_info;
     pipeline_info_t wb_pipeline_info;
-    pipeline_info_t post_wb_pipeline_info;
+
+    logic ex_bubble_misc;
+    logic ex_inst_valid;  // inst valid signal propagated from ex stage
 
     always_comb begin
         if_inst_dc = decode(if_pipeline_info.inst_pc.inst);
+        id_inst_dc = decode(id_pipeline_info.inst_pc.inst);
     end
 
+    logic id_valid_inst;
+    assign id_valid_inst = is_validInst(id_pipeline_info.inst_pc.inst);
+
+    always_ff @(posedge clk) begin
+        if (rst) ex_bubble_misc <= 1'b1;
+        else if (!core_ex_stall) ex_bubble_misc <= id_pipeline_info.bubble;
+        // 0 means valid here (no bubble)
+        // only when (there is no bubble from id) and (inst from id is valid) then we can set to valid (0)
+        // However, we have assumed that all inst should be validInst, thus there is no need for checking
+        // if inst valid. Original logic is
+        // ex_bubble_misc <= (!id_pipeline_info.bubble && is_validInst(id_pipeline_info.inst_pc.inst)) ? 1'b0 : 1'b1;
+        // Which can be simply to ex_bubble_misc <= id_pipeline_info.bubble; when is_validInst is always hold.
+    end
 
     assign if_inst = core.if_unit.rv_instr;  //! use imem_parcel_i instead?
 
     // Directly follow the logic in core.if_unit
+
     always_comb begin
         if (rst) if_pc = PC_INIT;
+        // if_pc will never be du_dato_i (with assume no_dbg_change_pc)
         else if (core.if_unit.du_we_pc_strb) if_pc = core.if_unit.du_dato_i;
         else if (!core.if_unit.pd_stall_i && !core.if_unit.du_stall_i) begin
             if_pc = core.if_unit.if_nxt_pc_o;
@@ -224,7 +262,7 @@ module isa (
     logic [31:0] xori_result = (wb_rs1) ^ ({20'h0, wb_inst_dc.imm12_i});
     logic xori_trigger;
     assign xori_trigger = ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == XORI)) &&
-        (!wb_pipeline_info.bubble) && (!wb_stall_past);
+        wb_pipeline_info.inst_valid;
 
     // LB
     logic lb_trigger;
@@ -273,14 +311,25 @@ module isa (
     logic [31:0] blt_taken_addr;
     logic [31:0] blt_gold_addr;
     logic blt_taken;
+    logic had_blt_past;
+    logic valid_blt;
+    assign valid_blt = (wb_inst_dc.opcode == OPC_B) && (wb_inst_dc.funct3 == BLT) &&
+        wb_pipeline_info.inst_valid;
+
+    always_ff @(posedge clk) begin
+        if (rst) had_blt_past <= 1'b0;
+        else if (valid_blt) had_blt_past <= 1'b1;
+        else if (blt_trigger && !valid_blt)  // pull down BLT rec when blt triggered
+            had_blt_past <= 1'b0;
+    end
+
     assign blt_taken = $signed(wb_rs1) < $signed(wb_rs2);
-    assign blt_trigger = ((wb_inst_dc.opcode == OPC_B) && (wb_inst_dc.funct3 == BLT)) &&
-        (!wb_stall_past) && (!core_wb_stall);
+    assign blt_trigger = had_blt_past && wb_pipeline_info.inst_valid;
     assign blt_non_taken_addr = wb_pipeline_info.inst_pc.pc + 32'd4;
     assign blt_taken_addr = wb_pipeline_info.inst_pc.pc +
         {{19{wb_inst_dc.imm13_b[12]}}, wb_inst_dc.imm13_b};
     always_ff @(posedge clk) begin
-        if (blt_trigger) blt_gold_addr <= blt_taken ? blt_taken_addr : blt_non_taken_addr;
+        if (valid_blt) blt_gold_addr <= blt_taken ? blt_taken_addr : blt_non_taken_addr;
     end
 
     // JAL
@@ -294,7 +343,7 @@ module isa (
     // bubble indicate current inst has value to write back to regfile
     // FIXME: Why auipc's trigger no need to check wb_stall_past? Is that because we don't look up
     // regfile's data when calculate gold_res?
-    assign auipc_trigger = (wb_inst_dc.opcode == OPC_AUIPC) && (!wb_pipeline_info.bubble);
+    assign auipc_trigger = (wb_inst_dc.opcode == OPC_AUIPC) && wb_pipeline_info.inst_valid;
 
     // stall and flush
     always_comb begin
@@ -320,6 +369,7 @@ module isa (
         if_flush = core_pd_flush;  //ignore parcel valid(no compressed inst)
     end
     always_ff @(posedge clk) begin
+        if_pipeline_info.inst_valid <= 1'b0;
         if (rst) if_pipeline_info.inst_pc <= {NOP, PC_INIT};
         else if (!core_pd_stall) if_pipeline_info.inst_pc <= {if_inst, if_pc};  //ignore WFI
     end
@@ -334,6 +384,7 @@ module isa (
         pd_flush = core_bu_flush;  // branch unit /state control
     end
     always_ff @(posedge clk) begin
+        pd_pipeline_info.inst_valid <= 1'b0;
         if (rst) pd_pipeline_info.inst_pc <= {NOP, PC_INIT};
         else if (!core_id_stall) pd_pipeline_info.inst_pc <= if_pipeline_info.inst_pc;
     end
@@ -351,6 +402,7 @@ module isa (
         id_bubble_cond = core_ex_stall | core_bu_flush;
     end
     always_ff @(posedge clk) begin
+        id_pipeline_info.inst_valid <= 1'b0;
         if (rst) id_pipeline_info.inst_pc <= {NOP, PC_INIT};
         else if (!core_ex_stall) id_pipeline_info.inst_pc <= pd_pipeline_info.inst_pc;
     end
@@ -374,12 +426,22 @@ module isa (
     always_comb @(posedge clk) begin
         ex_pipeline_info.bubble = (core.ex_units.alu_bubble) && (core.ex_units.lsu_bubble) &&
             (core.ex_units.mul_bubble) && (core.ex_units.div_bubble);
+        // Because we assume that all inst is valid, if last id's inst has no bubble
+        // Then it must be valid inst in exe stage
+        ex_inst_valid = ~(ex_pipeline_info.bubble & ex_bubble_misc);
+        ex_pipeline_info.inst_valid = ex_inst_valid;
     end
     // ex to mem
     always_ff @(posedge clk) begin
-        if (rst) mem_pipeline_info.inst_pc <= {NOP, PC_INIT};
-        else if (!core_wb_stall) mem_pipeline_info.inst_pc <= ex_pipeline_info.inst_pc;
+        if (rst) begin
+            mem_pipeline_info.inst_pc <= {NOP, PC_INIT};
+            mem_pipeline_info.inst_valid <= 1'b0;
+        end else if (!core_wb_stall) begin
+            mem_pipeline_info.inst_pc <= ex_pipeline_info.inst_pc;
+            mem_pipeline_info.inst_valid <= ex_pipeline_info.inst_valid;
+        end
     end
+
     always_ff @(posedge clk) begin
         if (rst) mem_pipeline_info.bubble <= 1;
         else if (!core_wb_stall) mem_pipeline_info.bubble <= ex_pipeline_info.bubble;
@@ -389,9 +451,19 @@ module isa (
         wb_flush = core_bu_flush;  // branch unit /state control
     end
     always_ff @(posedge clk) begin
-        if (rst) wb_pipeline_info.inst_pc <= {NOP, PC_INIT};
-        else if (!core_wb_stall) wb_pipeline_info.inst_pc <= mem_pipeline_info.inst_pc;
+        if (rst) begin
+            wb_pipeline_info.inst_pc <= {NOP, PC_INIT};
+        end else if (!core_wb_stall) begin
+            wb_pipeline_info.inst_pc <= mem_pipeline_info.inst_pc;
+        end
     end
+
+    always_ff @(posedge clk) begin
+        if (rst) wb_pipeline_info.inst_valid <= 1'b0;
+        else if (core_wb_stall) wb_pipeline_info.inst_valid <= 1'b0;
+        else wb_pipeline_info.inst_valid <= mem_pipeline_info.inst_valid;
+    end
+
     always_ff @(posedge clk) begin
         if (rst) wb_pipeline_info.bubble <= 1;
         else if (!core_wb_stall) wb_pipeline_info.bubble <= mem_pipeline_info.bubble;
@@ -449,7 +521,7 @@ module isa (
             (if_inst[6:0] == 7'b0110011  // R-type 1
         && if_inst[31:25] == 7'd000) || (if_inst[6:0] == 7'b0110011  // R-type 2
         && if_inst[31:25] == 7'b0100000 && (if_inst[14:12] == 3'b101 || if_inst[14:12] == 3'b000))
-            || (if_inst[6:0] == 7'b0001111  // FENCE, FENCE.TSO, PAUSE
+            || (if_inst[6:0] == 7'b0001111  // FENCE
         && if_inst[14:12] == 3'b000) || (if_inst[6:0] == 7'b1110011  // ECALL, EBREAK
         && if_inst[19:7] == 13'b0 && (if_inst[31:20] == 12'd0 || if_inst[31:20] == 12'd1));
     endproperty
@@ -473,6 +545,10 @@ module isa (
         @(posedge clk) disable iff (rst) xori_trigger |-> (core.wb_dst == wb_inst_dc.rd);
     endproperty : E2E_XORI_RD
 
+    property E2E_XORI_WE;
+        @(posedge clk) disable iff (rst) xori_trigger |-> (core.wb_we == 1 || wb_inst_dc.rd == 0);
+    endproperty : E2E_XORI_WE
+
     // For LB, we need check
     // 1. the req addr send to bus is the same as we calc
     // 2. wb_value_should be a proper value with mask
@@ -491,7 +567,6 @@ module isa (
         ) == lb_addr;  // Our mem stage is configured to 1 only
     endproperty : E2E_LB_ADDR
 
-
     property E2E_LB_RES;
         @(posedge clk) disable iff (rst)
             lb_trigger |-> (core.wb_r == (lb_gold_signed[tmp_adr[1:0]])) ||
@@ -506,14 +581,14 @@ module isa (
     // FIXME:
     // For BLT:
     // Add extra assume to ensure branch target is aligned to 4 (assume inst[8] = 0)
-    // When the instruction in the WB staged is BLT, we examine if branch should be taken
-    // Let taken_pc = WB's pc + simm13, non_taken_pc = WB's pc + 4
-    // if taken |-> ##[1: $] inst's pc == taken_pc
-    // else |-> ##[1: $] inst's pc == non_taken_pc (##[1: $] implies 1 or more cycle later)
-    // we should consider stall, so the cycle to change pc may take more than 1
+    // Let gold_pc = past BLT's pc + rs1 or + 4 (depends on taken or not)
+    // blt_trigger:
+    //  If there exist an valid inst with BLT in the past
+    //  When next valid inst is enter wb staged
+    // We check that the pc should be target gold_pc
     property E2E_BLT;
-        @(posedge clk) disable iff (rst)
-            blt_trigger |-> ##[1:20] wb_pipeline_info.inst_pc.pc == blt_gold_addr;
+        @(posedge clk) disable iff (rst) blt_trigger |-> core.wb_pc == blt_gold_addr;
+    // blt_trigger && $next(wb_pipeline_info.inst_valid) |-> wb_pipeline_info.inst_pc.pc == blt_gold_addr;
     endproperty : E2E_BLT
 
     // FIXME:
@@ -538,6 +613,19 @@ module isa (
     property E2E_AUIPC_RD;
         @(posedge clk) disable iff (rst) auipc_trigger |-> (core.wb_dst == wb_inst_dc.rd);
     endproperty : E2E_AUIPC_RD
+
+    property E2E_AUIPC_WE;
+        @(posedge clk) disable iff (rst) auipc_trigger |-> (core.wb_we == 1 || wb_inst_dc.rd == 0);
+    endproperty : E2E_AUIPC_WE
+
+
+    // invalid inst should never change reg file
+    property INVALID_NO_WEN;
+        @(posedge clk) disable iff (rst) wb_pipeline_info.inst_valid == 0 |-> core.wb_we == 0;
+    endproperty : INVALID_NO_WEN
+
+    invalid_no_wen :
+    assert property (INVALID_NO_WEN);
 
 `ifdef CheckInstValidAssume
     instValidCheck :
@@ -574,6 +662,8 @@ module isa (
     assert property (E2E_XORI_RD);
     e2e_xori_pre_wb :
     assert property (E2E_XORI_PRE_WB);
+    e2e_xori_we :
+    assert property (E2E_XORI_WE);
 `endif  // xori
 
 `ifdef blt
@@ -587,6 +677,10 @@ module isa (
 
     e2e_auipc_rd :
     assert property (E2E_AUIPC_RD);
+
+    e2e_auipc_we :
+    assert property (E2E_AUIPC_WE);
+
 `endif  // auipc
 
 `ifdef lb
@@ -622,13 +716,21 @@ module isa (
     assume property
         ((core.ex_units.bu.opcR[4:0] == {5'b11001}) |-> (core.ex_units.bu.opA_i[1:0] == 0));
 
-    // mem_ack_i == 0 is removed to ensure mem req is acked by bus and cache
+    // dmem_ack_i == 0 should be removed to ensure mem req is acked by bus and cache when testing lb
     disableDmemStall :
-    assume property ((core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
+    assume property (
+        (core.dmem_ack_i | core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
 
     pcAlign :
     assume property ((core.if_pc[1:0] | core.pd_pc[1:0] | core.id_pc[1:0] | core.ex_pc[1:0] |
                       core.mem_pc[0][1:0] | core.wb_pc[1:0]) == 2'b0);
+    // no_dbg_change_pc : assume property (core.if_unit.du_we_pc_strb | core.if_unit.du_we_pc_i == 0);
+
+    no_dbg_stall :
+    assume property (core.dbg_stall_i == 0);
+
+    always32bit_parcel :
+    assume property (core.if_unit.is_16bit_instruction == 0);
 
 endmodule
 
