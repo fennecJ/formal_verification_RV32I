@@ -141,6 +141,7 @@ endfunction
 logic [31:0] if_inst;
 logic [31:0] if_pc;
 rv32i_inst_t wb_inst_dc;
+rv32i_inst_t mem_inst_dc;
 
 //pipeline follower
 
@@ -149,12 +150,7 @@ localparam logic [31:0] PC_INIT = 'h200;
 
 
 //inst info
-pipeline_info_t if_pipeline_info;
-pipeline_info_t pd_pipeline_info;
-pipeline_info_t id_pipeline_info;
-pipeline_info_t ex_pipeline_info;
-pipeline_info_t mem_pipeline_info;
-pipeline_info_t wb_pipeline_info;
+
 logic if_flush;
 logic pd_flush;
 logic id_flush;
@@ -183,6 +179,20 @@ module isa (
     input clk,
     input rst
 );
+    rv32i_inst_t if_inst_dc;
+    pipeline_info_t if_pipeline_info;
+    pipeline_info_t pd_pipeline_info;
+    pipeline_info_t id_pipeline_info;
+    pipeline_info_t ex_pipeline_info;
+    pipeline_info_t mem_pipeline_info;
+    pipeline_info_t wb_pipeline_info;
+    pipeline_info_t post_wb_pipeline_info;
+
+    always_comb begin
+        if_inst_dc = decode(if_pipeline_info.inst_pc.inst);
+    end
+
+
     assign if_inst = core.if_unit.rv_instr;  //! use imem_parcel_i instead?
 
     // Directly follow the logic in core.if_unit
@@ -200,18 +210,61 @@ module isa (
     end
 
     always_comb begin
-        wb_inst_dc = decode(wb_pipeline_info.inst_pc.inst);
+        wb_inst_dc  = decode(wb_pipeline_info.inst_pc.inst);
+        mem_inst_dc = decode(mem_pipeline_info.inst_pc.inst);
     end
 
     //helper signal in write back stage
+    logic [31:0] wb_rs1;
+    logic [31:0] wb_rs2;
+    assign wb_rs1 = (|(wb_inst_dc.rs1)) ? (core.int_rf.rf[wb_inst_dc.rs1]) : 0;
+    assign wb_rs2 = (|(wb_inst_dc.rs2)) ? (core.int_rf.rf[wb_inst_dc.rs2]) : 0;
+
     // xori
-    logic [31:0] reg_value = (|(wb_inst_dc.rs1)) ? (core.int_rf.rf[wb_inst_dc.rs1]) : 0;
-    logic [31:0] xori_result = (reg_value) ^ ({20'h0, wb_inst_dc.imm12_i});
+    logic [31:0] xori_result = (wb_rs1) ^ ({20'h0, wb_inst_dc.imm12_i});
     logic xori_trigger;
     assign xori_trigger = ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == XORI)) &&
         (!wb_pipeline_info.bubble) && (!wb_stall_past);
 
     // LB
+    logic lb_trigger;
+    logic [31:0] lb_gold_unsigned[4];
+    logic [31:0] lb_gold_signed[4];
+    assign {lb_gold_unsigned[0], lb_gold_unsigned[1], lb_gold_unsigned[2], lb_gold_unsigned[3]} = {
+        32'hFFFFFFB4, 32'hFFFFFFA3, 32'hFFFFFF92, 32'hFFFFFF81
+    };
+    assign {lb_gold_signed[0], lb_gold_signed[1], lb_gold_signed[2], lb_gold_signed[3]} = {
+        32'h0000004B, 32'h0000003A, 32'h00000029, 32'h00000018
+    };
+
+    logic [31:0] lb_golden_0_unsigned;
+    logic [31:0] lb_golden_1_unsigned;
+    logic [31:0] lb_golden_2_unsigned;
+    logic [31:0] lb_golden_3_unsigned;
+    logic [31:0] lb_golden_0_signed;
+    logic [31:0] lb_golden_1_signed;
+    logic [31:0] lb_golden_2_signed;
+    logic [31:0] lb_golden_3_signed;
+    logic [31:0] lb_addr;
+    logic [31:0] lb_addr_r;
+    assign lb_trigger = ((wb_inst_dc.opcode == OPC_IL)) && ((wb_inst_dc.funct3 == LB)) &&
+        core.wb_we && !core_wb_stall && !wb_stall_past;
+    assign lb_addr = {{20{wb_inst_dc.imm12_i[11]}}, wb_inst_dc.imm12_i} + wb_rs1;
+
+    always_ff @(posedge clk) begin
+        lb_addr_r <= lb_addr;
+    end
+
+    // assign lb_addr = {{20{wb_inst_dc.imm12_i[11]}}, wb_inst_dc.imm12_i} + wb_rs1;
+    // we assume all data store in dmem is 0x18293A4B or 0x8192A3B4 when checking LB
+    assign lb_golden_0_signed   = 32'hFFFFFFB4;
+    assign lb_golden_1_signed   = 32'hFFFFFFA3;
+    assign lb_golden_2_signed   = 32'hFFFFFF92;
+    assign lb_golden_3_signed   = 32'hFFFFFF81;
+    assign lb_golden_0_unsigned = 32'h0000004B;
+    assign lb_golden_1_unsigned = 32'h0000003A;
+    assign lb_golden_2_unsigned = 32'h00000029;
+    assign lb_golden_3_unsigned = 32'h00000018;
 
     // BLT
     // FIXME: BLT current cannot pass assertion
@@ -220,11 +273,7 @@ module isa (
     logic [31:0] blt_taken_addr;
     logic [31:0] blt_gold_addr;
     logic blt_taken;
-    logic [31:0] blt_rs1;
-    logic [31:0] blt_rs2;
-    assign blt_rs1 = (|(wb_inst_dc.rs1)) ? (core.int_rf.rf[wb_inst_dc.rs1]) : 0;
-    assign blt_rs2 = (|(wb_inst_dc.rs2)) ? (core.int_rf.rf[wb_inst_dc.rs2]) : 0;
-    assign blt_taken = $signed(blt_rs1) < $signed(blt_rs2);
+    assign blt_taken = $signed(wb_rs1) < $signed(wb_rs2);
     assign blt_trigger = ((wb_inst_dc.opcode == OPC_B) && (wb_inst_dc.funct3 == BLT)) &&
         (!wb_stall_past) && (!core_wb_stall);
     assign blt_non_taken_addr = wb_pipeline_info.inst_pc.pc + 32'd4;
@@ -274,6 +323,7 @@ module isa (
         if (rst) if_pipeline_info.inst_pc <= {NOP, PC_INIT};
         else if (!core_pd_stall) if_pipeline_info.inst_pc <= {if_inst, if_pc};  //ignore WFI
     end
+
     always_ff @(posedge clk) begin
         if (rst) if_pipeline_info.bubble <= 1;
         else if (if_flush) if_pipeline_info.bubble <= 1;
@@ -287,6 +337,7 @@ module isa (
         if (rst) pd_pipeline_info.inst_pc <= {NOP, PC_INIT};
         else if (!core_id_stall) pd_pipeline_info.inst_pc <= if_pipeline_info.inst_pc;
     end
+
     always_ff @(posedge clk) begin
         if (rst) pd_pipeline_info.bubble <= 1;
         else if (pd_flush) pd_pipeline_info.bubble <= 1;
@@ -422,20 +473,35 @@ module isa (
         @(posedge clk) disable iff (rst) xori_trigger |-> (core.wb_dst == wb_inst_dc.rd);
     endproperty : E2E_XORI_RD
 
-
-    // FIXME:
     // For LB, we need check
     // 1. the req addr send to bus is the same as we calc
     // 2. wb_value_should be a proper value with mask
-    // to shrink complexity, we can use stop and assume
+    // to shrink complexity, we can use stopat and assume
     // to constraint all load result to be 0xabcd1234 and
     // check for addr end with 0, 1, 2, 3 to be [34, 12, cd, ab]
     // respectively
+    logic [31:0] tmp_adr;
+    always_ff @(posedge clk) begin
+        tmp_adr <= core.mem_memadr[0];
+    end
 
-    property E2E_BLT;
+    property E2E_LB_ADDR;
+        @(posedge clk) disable iff (rst) lb_trigger |-> $past(
+            core.wb_unit.mem_memadr_i
+        ) == lb_addr;  // Our mem stage is configured to 1 only
+    endproperty : E2E_LB_ADDR
+
+
+    property E2E_LB_RES;
         @(posedge clk) disable iff (rst)
-            blt_trigger |-> ##[1:20] wb_pipeline_info.inst_pc.pc == blt_gold_addr;
-    endproperty : E2E_BLT
+            lb_trigger |-> (core.wb_r == (lb_gold_signed[tmp_adr[1:0]])) ||
+            (core.wb_r == (lb_gold_unsigned[tmp_adr[1:0]]));
+    endproperty : E2E_LB_RES
+
+    property E2E_LB_RD;
+        @(posedge clk) disable iff (rst) lb_trigger |-> (core.wb_dst == wb_inst_dc.rd);
+    endproperty : E2E_LB_RD
+
 
     // FIXME:
     // For BLT:
@@ -445,6 +511,10 @@ module isa (
     // if taken |-> ##[1: $] inst's pc == taken_pc
     // else |-> ##[1: $] inst's pc == non_taken_pc (##[1: $] implies 1 or more cycle later)
     // we should consider stall, so the cycle to change pc may take more than 1
+    property E2E_BLT;
+        @(posedge clk) disable iff (rst)
+            blt_trigger |-> ##[1:20] wb_pipeline_info.inst_pc.pc == blt_gold_addr;
+    endproperty : E2E_BLT
 
     // FIXME:
     // For JAL
@@ -519,6 +589,20 @@ module isa (
     assert property (E2E_AUIPC_RD);
 `endif  // auipc
 
+`ifdef lb
+    e2e_lb_addr :
+    assert property (E2E_LB_ADDR);
+
+    e2e_lb_res :
+    assert property (E2E_LB_RES);
+
+    e2e_lb_rd :
+    assert property (E2E_LB_RD);
+
+    lb_data_constrain :
+    assume property (core.dmem_q_i == 32'h18293A4B || core.dmem_q_i == 32'h8192A3B4);
+`endif  // lb
+
 `endif  // ISA_GROUP_A
 
 
@@ -538,9 +622,9 @@ module isa (
     assume property
         ((core.ex_units.bu.opcR[4:0] == {5'b11001}) |-> (core.ex_units.bu.opA_i[1:0] == 0));
 
+    // mem_ack_i == 0 is removed to ensure mem req is acked by bus and cache
     disableDmemStall :
-    assume property (
-        (core.dmem_ack_i | core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
+    assume property ((core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
 
     pcAlign :
     assume property ((core.if_pc[1:0] | core.pd_pc[1:0] | core.id_pc[1:0] | core.ex_pc[1:0] |
