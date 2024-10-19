@@ -618,19 +618,33 @@ module isa (
     // |->  ##[1: $] reg[rd] should be same as result
     // verilog_format: off
     property E2E_JAL_RD_IS_PC_PLUS_4;
-        @(posedge clk) disable iff (rst) (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall) &&
-            (wb_pipeline_info.bubble == 1'b0) && (core.wb_we)
+        @(posedge clk) disable iff (rst)
+            (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall)
+            && (wb_pipeline_info.inst_valid == 1'b1)
+
             |-> (core.wb_r == wb_pipeline_info.inst_pc.pc + 4);
     endproperty
 
-    sequence FIRST_VALID_INST_AFTER_JAL_CAPTURED;
-        (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall) && (wb_pipeline_info.bubble == 1'b0) ##1
-        (wb_pipeline_info.bubble == 1'b0);
+    sequence IMMEDIATLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED;
+        (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall)
+        && (wb_pipeline_info.inst_valid == 1'b1) ##1
+
+        (wb_pipeline_info.inst_valid == 1'b1);
+    endsequence
+
+    sequence EVENTUALLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED;
+        (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall)
+        && (wb_pipeline_info.inst_valid == 1'b1) ##1
+
+        (wb_pipeline_info.inst_valid == 1'b0)[*0:$] ##1
+
+        (wb_pipeline_info.inst_valid == 1'b1) && (!core_wb_stall);
     endsequence
 
     property E2E_JAL_NEXT_VALID_INST_IS_CORRECT;
         @(posedge clk) disable iff (rst)
-            FIRST_VALID_INST_AFTER_JAL_CAPTURED
+            IMMEDIATLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED
+            or EVENTUALLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED
             |->(wb_pipeline_info.inst_pc.pc == previous_jal_pc + previous_jal_imm_signed_exted);
     endproperty
     // verilog_format: on
