@@ -311,6 +311,23 @@ module isa (
     end
 
     // JAL
+    logic [31:0] previous_jal_pc;
+    logic [20:0] previous_jal_imm;
+    logic [31:0] previous_jal_imm_signed_exted;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            previous_jal_pc  <= 32'd0;
+            previous_jal_imm <= 21'd0;
+        end else begin
+            if ((wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall) &&
+                (wb_pipeline_info.bubble == 1'b0)) begin
+                previous_jal_pc  <= wb_pipeline_info.inst_pc.pc;
+                previous_jal_imm <= wb_inst_dc.imm21_j;
+            end
+        end
+    end
+    assign previous_jal_imm_signed_exted = {{11{previous_jal_imm[20]}}, previous_jal_imm};
 
     // AUIPC
     logic auipc_trigger;
@@ -600,6 +617,24 @@ module isa (
     // |->  ##[1: $] inst's pc == taken_pc
     // result to be write back should be WB's pc + 4
     // |->  ##[1: $] reg[rd] should be same as result
+    // verilog_format: off
+    property E2E_JAL_RD_IS_PC_PLUS_4;
+        @(posedge clk) disable iff (rst) (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall) &&
+            (wb_pipeline_info.bubble == 1'b0) && (core.wb_we)
+            |-> (core.wb_r == wb_pipeline_info.inst_pc.pc + 4);
+    endproperty
+
+    sequence FIRST_VALID_INST_AFTER_JAL_CAPTURED;
+        (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall) && (wb_pipeline_info.bubble == 1'b0) ##1
+        (wb_pipeline_info.bubble == 1'b0);
+    endsequence
+
+    property E2E_JAL_NEXT_VALID_INST_IS_CORRECT;
+        @(posedge clk) disable iff (rst)
+            FIRST_VALID_INST_AFTER_JAL_CAPTURED
+            |->(wb_pipeline_info.inst_pc.pc == previous_jal_pc + previous_jal_imm_signed_exted);
+    endproperty
+    // verilog_format: on
 
     // For AUIPC
     // When the instruction in the WB staged is AUIPC
@@ -695,7 +730,6 @@ module isa (
 `endif  // PipeFollower
 
 
-
 `ifdef ISA_GROUP_A
     /* FIXME: add other isa for group A [XORI, BLT, JAL, LB, AUIPC] */
     invalid_no_wen :
@@ -724,6 +758,14 @@ module isa (
     e2e_blt :
     assert property (E2E_BLT);
 `endif  // blt
+
+`ifdef jal
+    e2e_jal_rd_correct :
+    assert property (E2E_JAL_RD_IS_PC_PLUS_4);
+
+    e2e_jal_pc_jump_correct :
+    assert property (E2E_JAL_NEXT_VALID_INST_IS_CORRECT);
+`endif  // jal
 
 `ifdef auipc
     e2e_auipc_pre_wb :
