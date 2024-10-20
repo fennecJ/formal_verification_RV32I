@@ -286,7 +286,7 @@ module isa (
     logic [31:0] lb_addr;
     logic [31:0] lb_addr_r;
     assign lb_trigger = ((wb_inst_dc.opcode == OPC_IL)) && ((wb_inst_dc.funct3 == LB)) &&
-        core.wb_we && !core_wb_stall && !wb_stall_past;
+        wb_pipeline_info.inst_valid;
     assign lb_addr = {{20{wb_inst_dc.imm12_i[11]}}, wb_inst_dc.imm12_i} + wb_rs1;
 
     always_ff @(posedge clk) begin
@@ -545,9 +545,13 @@ module isa (
         @(posedge clk) disable iff (rst) xori_trigger |-> (core.wb_dst == wb_inst_dc.rd);
     endproperty : E2E_XORI_RD
 
-    property E2E_XORI_WE;
-        @(posedge clk) disable iff (rst) xori_trigger |-> (core.wb_we == 1 || wb_inst_dc.rd == 0);
-    endproperty : E2E_XORI_WE
+    property E2E_XORI_WE0;  // rd == 0 -> must disable write;
+        @(posedge clk) disable iff (rst) xori_trigger && !(|wb_inst_dc.rd) |-> (!core.wb_we);
+    endproperty : E2E_XORI_WE0
+
+    property E2E_XORI_WE1;  // rd != 0 -> must enable write;
+        @(posedge clk) disable iff (rst) xori_trigger && |wb_inst_dc.rd |-> (core.wb_we == 1);
+    endproperty : E2E_XORI_WE1
 
     // For LB, we need check
     // 1. the req addr send to bus is the same as we calc
@@ -569,14 +573,21 @@ module isa (
 
     property E2E_LB_RES;
         @(posedge clk) disable iff (rst)
-            lb_trigger |-> (core.wb_r == (lb_gold_signed[tmp_adr[1:0]])) ||
-            (core.wb_r == (lb_gold_unsigned[tmp_adr[1:0]]));
+            lb_trigger |-> (core.wb_r == (lb_gold_signed[lb_addr[1:0]])) ||
+            (core.wb_r == (lb_gold_unsigned[lb_addr[1:0]]));
     endproperty : E2E_LB_RES
 
     property E2E_LB_RD;
         @(posedge clk) disable iff (rst) lb_trigger |-> (core.wb_dst == wb_inst_dc.rd);
     endproperty : E2E_LB_RD
 
+    property E2E_LB_WE0;  // rd == 0 -> must disable write;
+        @(posedge clk) disable iff (rst) lb_trigger && !(|wb_inst_dc.rd) |-> (!core.wb_we);
+    endproperty : E2E_LB_WE0
+
+    property E2E_LB_WE1;  // rd != 0 -> must enable write;
+        @(posedge clk) disable iff (rst) lb_trigger && |wb_inst_dc.rd |-> (core.wb_we == 1);
+    endproperty : E2E_LB_WE1
 
     // FIXME:
     // For BLT:
@@ -614,18 +625,19 @@ module isa (
         @(posedge clk) disable iff (rst) auipc_trigger |-> (core.wb_dst == wb_inst_dc.rd);
     endproperty : E2E_AUIPC_RD
 
-    property E2E_AUIPC_WE;
-        @(posedge clk) disable iff (rst) auipc_trigger |-> (core.wb_we == 1 || wb_inst_dc.rd == 0);
-    endproperty : E2E_AUIPC_WE
+    property E2E_AUIPC_WE0;  // rd == 0 -> must disable write;
+        @(posedge clk) disable iff (rst) auipc_trigger && !(|wb_inst_dc.rd) |-> (!core.wb_we);
+    endproperty : E2E_AUIPC_WE0
 
+    property E2E_AUIPC_WE1;  // rd != 0 -> must enable write;
+        @(posedge clk) disable iff (rst) auipc_trigger && |wb_inst_dc.rd |-> (core.wb_we == 1);
+    endproperty : E2E_AUIPC_WE1
 
     // invalid inst should never change reg file
     property INVALID_NO_WEN;
         @(posedge clk) disable iff (rst) wb_pipeline_info.inst_valid == 0 |-> core.wb_we == 0;
     endproperty : INVALID_NO_WEN
 
-    invalid_no_wen :
-    assert property (INVALID_NO_WEN);
 
 `ifdef CheckInstValidAssume
     instValidCheck :
@@ -657,13 +669,26 @@ module isa (
 
 `ifdef ISA_GROUP_A
     /* FIXME: add other isa for group A [XORI, BLT, JAL, LB, AUIPC] */
+    invalid_no_wen :
+    assert property (INVALID_NO_WEN);
+
+    // Check if assumptions of Dmem still allow load insts to appear (should be covered)
+    no_over_constraint_for_load :
+    assert property (wb_pipeline_info.inst_valid && (wb_inst_dc.opcode == OPC_IL) |-> 1);
+
+    // Check if assumptions of Dmem still allow store insts to appear (should be covered)
+    no_over_constraint_for_store :
+    assert property (wb_pipeline_info.inst_valid && (wb_inst_dc.opcode == OPC_S) |-> 1);
+
 `ifdef xori
     e2e_xori_rd :
     assert property (E2E_XORI_RD);
     e2e_xori_pre_wb :
     assert property (E2E_XORI_PRE_WB);
-    e2e_xori_we :
-    assert property (E2E_XORI_WE);
+    e2e_xori_we0 :
+    assert property (E2E_XORI_WE0);
+    e2e_xori_we1 :
+    assert property (E2E_XORI_WE1);
 `endif  // xori
 
 `ifdef blt
@@ -678,9 +703,11 @@ module isa (
     e2e_auipc_rd :
     assert property (E2E_AUIPC_RD);
 
-    e2e_auipc_we :
-    assert property (E2E_AUIPC_WE);
+    e2e_auipc_we0 :
+    assert property (E2E_AUIPC_WE0);
 
+    e2e_auipc_we1 :
+    assert property (E2E_AUIPC_WE1);
 `endif  // auipc
 
 `ifdef lb
@@ -695,6 +722,12 @@ module isa (
 
     lb_data_constrain :
     assume property (core.dmem_q_i == 32'h18293A4B || core.dmem_q_i == 32'h8192A3B4);
+
+    e2e_lb_we0 :
+    assert property (E2E_LB_WE0);
+
+    e2e_lb_we1 :
+    assert property (E2E_LB_WE1);
 `endif  // lb
 
 `endif  // ISA_GROUP_A
@@ -717,9 +750,11 @@ module isa (
         ((core.ex_units.bu.opcR[4:0] == {5'b11001}) |-> (core.ex_units.bu.opA_i[1:0] == 0));
 
     // dmem_ack_i == 0 should be removed to ensure mem req is acked by bus and cache when testing lb
-    disableDmemStall :
-    assume property (
-        (core.dmem_ack_i | core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
+    disableDmemErrStall :
+    assume property ((core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
+
+    fastMemResp :
+    assume property (@(posedge clk) disable iff (rst) core.wb_stall |-> ##[1:4] core.wb_stall == 0);
 
     pcAlign :
     assume property ((core.if_pc[1:0] | core.pd_pc[1:0] | core.id_pc[1:0] | core.ex_pc[1:0] |

@@ -37,13 +37,13 @@ proc setCheckFlag {flagName flagValue} {
 setCheckFlag "CheckInstValidAssume" 0
 setCheckFlag "RegFileStable" 0
 setCheckFlag "PipeFollower" 0
-setCheckFlag "ISA_GROUP_A" 0
+setCheckFlag "ISA_GROUP_A" 1
     # Following Flag works only when "ISA_GROUP_A" set to 1
-    setCheckFlag "xori" 0
-    setCheckFlag "lb" 0
+    setCheckFlag "xori" 1
+    setCheckFlag "lb" 1
     setCheckFlag "blt" 0
     setCheckFlag "jal" 0
-    setCheckFlag "auipc" 0
+    setCheckFlag "auipc" 1
 
 eval $ANALYZE_COMMAND
 
@@ -65,6 +65,7 @@ assume {core.du_stall == 1'b0}
 assume {core.du_stall_if == 1'b0}
 assume {core.du_re_rf == 1'b0}
 assume {core.dbg_we_i == 1'b0}
+assume {core.dbg_strb_i == 1'b0}
 assume {core.int_rf.du_we_rf_i == 0}
 assume {core.cpu_state.du_we_csr_i == 0}
 
@@ -73,6 +74,21 @@ stopat core.if_unit.parcel_exceptions
 assume {core.if_unit.parcel_exceptions == 0}
 assume {core.wb_exceptions == 0}
 assume {core.id_unit.my_exceptions == 0}
+
+
+# All ahb transfer is always ready 
+assume {ibiu_inst.HREADY == 1}
+assume {dbiu_inst.HREADY == 1}
+
+# All ahb resp is ok (0), indicate no err
+assume {ibiu_inst.HRESP == 0}
+assume {ibiu_inst.HRESP == 0}
+
+# cache always hit
+stopat imem_ctrl_inst.cache_blk.icache_inst.cache_hit
+assume {imem_ctrl_inst.cache_blk.icache_inst.cache_hit == 1}
+stopat dmem_ctrl_inst.cache_blk.dcache_inst.cache_hit
+assume {dmem_ctrl_inst.cache_blk.dcache_inst.cache_hit == 1}
 
 # Fetched instruction always valid RV32I instruction
 stopat core.if_unit.rv_instr
@@ -84,3 +100,7 @@ set_prove_cache on
 set_prove_time_limit 259200s
 
 prove -all
+exec mkdir -p result
+set current_date_time [exec date +%F_%T]
+set result_file_name "result_${current_date_time}.jdb"
+save -jdb ./result/${result_file_name} -capture_setup -capture_session_data
