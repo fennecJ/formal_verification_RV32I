@@ -340,9 +340,6 @@ module isa (
     logic [31:0] auipc_gold_res;
     assign auipc_uimm = {wb_inst_dc.uimm_20, 12'b0};
     assign auipc_gold_res = auipc_uimm + wb_pipeline_info.inst_pc.pc;
-    // bubble indicate current inst has value to write back to regfile
-    // FIXME: Why auipc's trigger no need to check wb_stall_past? Is that because we don't look up
-    // regfile's data when calculate gold_res?
     assign auipc_trigger = (wb_inst_dc.opcode == OPC_AUIPC) && wb_pipeline_info.inst_valid;
 
     // stall and flush
@@ -565,6 +562,10 @@ module isa (
         tmp_adr <= core.mem_memadr[0];
     end
 
+    // check the riscv_wb.sv and you can see that wb result is determined by a register
+    // wb_r_o, which is a determined in past cycle. And the sign_ext is also performed
+    // in past cycle based on past cycle's mem_memadr_i. Thus when a lb_trigger is pulled
+    // up, we should check past address instead of current address.
     property E2E_LB_ADDR;
         @(posedge clk) disable iff (rst) lb_trigger |-> $past(
             core.wb_unit.mem_memadr_i
@@ -589,7 +590,6 @@ module isa (
         @(posedge clk) disable iff (rst) lb_trigger && |wb_inst_dc.rd |-> (core.wb_we == 1);
     endproperty : E2E_LB_WE1
 
-    // FIXME:
     // For BLT:
     // Add extra assume to ensure branch target is aligned to 4 (assume inst[8] = 0)
     // Let gold_pc = past BLT's pc + rs1 or + 4 (depends on taken or not)
@@ -597,9 +597,22 @@ module isa (
     //  If there exist an valid inst with BLT in the past
     //  When next valid inst is enter wb staged
     // We check that the pc should be target gold_pc
+    sequence blt_followed_by_invalid_inst_then_valid;
+        valid_blt ##1
+        // inst is not valid for 1~$(any numbers) consecutive cycles
+        ((wb_pipeline_info.inst_valid == 0) [* 1: $])
+        // then one cycle after, there is a valid inst
+        ##1 wb_pipeline_info.inst_valid;
+    endsequence : blt_followed_by_invalid_inst_then_valid
+
+    sequence blt_followed_by_valid_inst_immediately;
+        valid_blt ##1 wb_pipeline_info.inst_valid == 1;
+    endsequence : blt_followed_by_valid_inst_immediately
+
     property E2E_BLT;
-        @(posedge clk) disable iff (rst) blt_trigger |-> core.wb_pc == blt_gold_addr;
-    // blt_trigger && $next(wb_pipeline_info.inst_valid) |-> wb_pipeline_info.inst_pc.pc == blt_gold_addr;
+        // @(posedge clk) disable iff (rst) blt_trigger |-> core.wb_pc == blt_gold_addr;
+        @(posedge clk) disable iff (rst) blt_followed_by_invalid_inst_then_valid or
+            blt_followed_by_valid_inst_immediately |-> core.wb_pc == blt_gold_addr;
     endproperty : E2E_BLT
 
     // FIXME:
@@ -746,15 +759,24 @@ module isa (
 
     // mask jalr source to prevent exception
     jalrSourceAlign :
-    assume property
-        ((core.ex_units.bu.opcR[4:0] == {5'b11001}) |-> (core.ex_units.bu.opA_i[1:0] == 0));
+    assume property (
+        wb_inst_dc.opcode == OPC_JALR |-> wb_inst_dc.imm12_i[1:0] == 0 && wb_rs1[1:0] == 0);
 
-    // dmem_ack_i == 0 should be removed to ensure mem req is acked by bus and cache when testing lb
     disableDmemErrStall :
     assume property ((core.dmem_err_i | core.dmem_misaligned_i | core.dmem_page_fault_i) == 0);
 
-    fastMemResp :
-    assume property (@(posedge clk) disable iff (rst) core.wb_stall |-> ##[1:4] core.wb_stall == 0);
+    noException :
+    assume property ((core.if_exceptions.any | core.pd_exceptions.any | core.id_exceptions.any |
+                      core.ex_exceptions.any | core.wb_exceptions.any) == 0);
+
+    // The dmem and bus are black-boxed, so we can assume dmem responds immediately to requests.
+    // Without black-boxing, stalls always occur after load/store due to the bus design (AHB3-Lite).
+    // Our focus is verifying CPU correctness for a subset of RV32I, so bus handling is out of scope.
+    // Key checks: CPU calculates correct imem/dmem addresses and handles fetched data properly.
+    // CPU stalls, including those caused by memory access, are assumed correct, as verified by the
+    // instructor and TAs under RV32I.
+    idealDmem :
+    assume property (@(posedge clk) disable iff (rst) core.dmem_ack_i == 1);
 
     pcAlign :
     assume property ((core.if_pc[1:0] | core.pd_pc[1:0] | core.id_pc[1:0] | core.ex_pc[1:0] |
