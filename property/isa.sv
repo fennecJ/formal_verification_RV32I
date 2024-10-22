@@ -259,53 +259,31 @@ module isa (
     assign wb_rs2 = (|(wb_inst_dc.rs2)) ? (core.int_rf.rf[wb_inst_dc.rs2]) : 0;
 
     // xori
-    logic [31:0] xori_result = (wb_rs1) ^ ({20'h0, wb_inst_dc.imm12_i});
+    logic [31:0] xori_result;
+    assign xori_result = (wb_rs1) ^ ({20'h0, wb_inst_dc.imm12_i});
     logic xori_trigger;
     assign xori_trigger = ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == XORI)) &&
         wb_pipeline_info.inst_valid;
 
     // LB
     logic lb_trigger;
-    logic [31:0] lb_gold_unsigned[4];
-    logic [31:0] lb_gold_signed[4];
-    assign {lb_gold_unsigned[0], lb_gold_unsigned[1], lb_gold_unsigned[2], lb_gold_unsigned[3]} = {
-        32'hFFFFFFB4, 32'hFFFFFFA3, 32'hFFFFFF92, 32'hFFFFFF81
-    };
-    assign {lb_gold_signed[0], lb_gold_signed[1], lb_gold_signed[2], lb_gold_signed[3]} = {
-        32'h0000004B, 32'h0000003A, 32'h00000029, 32'h00000018
-    };
-
-    logic [31:0] lb_golden_0_unsigned;
-    logic [31:0] lb_golden_1_unsigned;
-    logic [31:0] lb_golden_2_unsigned;
-    logic [31:0] lb_golden_3_unsigned;
-    logic [31:0] lb_golden_0_signed;
-    logic [31:0] lb_golden_1_signed;
-    logic [31:0] lb_golden_2_signed;
-    logic [31:0] lb_golden_3_signed;
-    logic [31:0] lb_addr;
-    logic [31:0] lb_addr_r;
-    assign lb_trigger = ((wb_inst_dc.opcode == OPC_IL)) && ((wb_inst_dc.funct3 == LB)) &&
-        wb_pipeline_info.inst_valid;
-    assign lb_addr = {{20{wb_inst_dc.imm12_i[11]}}, wb_inst_dc.imm12_i} + wb_rs1;
+    logic [31:0] lb_gold_data[4];
+    logic [31:0] last_mem_addr;
 
     always_ff @(posedge clk) begin
-        lb_addr_r <= lb_addr;
+        lb_gold_data[0] <= {{24{core.dmem_q_i[7]}}, core.dmem_q_i[7:0]};
+        lb_gold_data[1] <= {{24{core.dmem_q_i[15]}}, core.dmem_q_i[15:8]};
+        lb_gold_data[2] <= {{24{core.dmem_q_i[23]}}, core.dmem_q_i[23:16]};
+        lb_gold_data[3] <= {{24{core.dmem_q_i[31]}}, core.dmem_q_i[31:24]};
+        last_mem_addr   <= core.wb_unit.mem_memadr_i;
     end
 
-    // assign lb_addr = {{20{wb_inst_dc.imm12_i[11]}}, wb_inst_dc.imm12_i} + wb_rs1;
-    // we assume all data store in dmem is 0x18293A4B or 0x8192A3B4 when checking LB
-    assign lb_golden_0_signed   = 32'hFFFFFFB4;
-    assign lb_golden_1_signed   = 32'hFFFFFFA3;
-    assign lb_golden_2_signed   = 32'hFFFFFF92;
-    assign lb_golden_3_signed   = 32'hFFFFFF81;
-    assign lb_golden_0_unsigned = 32'h0000004B;
-    assign lb_golden_1_unsigned = 32'h0000003A;
-    assign lb_golden_2_unsigned = 32'h00000029;
-    assign lb_golden_3_unsigned = 32'h00000018;
+    logic [31:0] lb_gold_addr;
+    assign lb_trigger = ((wb_inst_dc.opcode == OPC_IL)) && ((wb_inst_dc.funct3 == LB)) &&
+        wb_pipeline_info.inst_valid;
+    assign lb_gold_addr = {{20{wb_inst_dc.imm12_i[11]}}, wb_inst_dc.imm12_i} + wb_rs1;
 
     // BLT
-    // FIXME: BLT current cannot pass assertion
     logic blt_trigger;
     logic [31:0] blt_non_taken_addr;
     logic [31:0] blt_taken_addr;
@@ -566,16 +544,15 @@ module isa (
     // wb_r_o, which is a determined in past cycle. And the sign_ext is also performed
     // in past cycle based on past cycle's mem_memadr_i. Thus when a lb_trigger is pulled
     // up, we should check past address instead of current address.
+    // We assume that Dmem is ideal (That is, dmem has no stall). Thus any load/store instruction
+    // enter wb must means that last_mem_addr must be inferred by current inst.
     property E2E_LB_ADDR;
-        @(posedge clk) disable iff (rst) lb_trigger |-> $past(
-            core.wb_unit.mem_memadr_i
-        ) == lb_addr;  // Our mem stage is configured to 1 only
+        @(posedge clk) disable iff (rst) lb_trigger |-> last_mem_addr == lb_gold_addr;
     endproperty : E2E_LB_ADDR
 
     property E2E_LB_RES;
         @(posedge clk) disable iff (rst)
-            lb_trigger |-> (core.wb_r == (lb_gold_signed[lb_addr[1:0]])) ||
-            (core.wb_r == (lb_gold_unsigned[lb_addr[1:0]]));
+            lb_trigger |-> core.wb_r == lb_gold_data[lb_gold_addr[1:0]];
     endproperty : E2E_LB_RES
 
     property E2E_LB_RD;
@@ -732,9 +709,6 @@ module isa (
 
     e2e_lb_rd :
     assert property (E2E_LB_RD);
-
-    lb_data_constrain :
-    assume property (core.dmem_q_i == 32'h18293A4B || core.dmem_q_i == 32'h8192A3B4);
 
     e2e_lb_we0 :
     assert property (E2E_LB_WE0);
