@@ -789,17 +789,17 @@ module isa (
 `endif  // blt
 
 `ifdef jal
-    // e2e_jal_rd_correct :
-    // assert property (E2E_JAL_RD_IS_PC_PLUS_4);
+    e2e_jal_rd_correct :
+    assert property (E2E_JAL_RD_IS_PC_PLUS_4);
 
-    // e2e_jal_pc_jump_correct :
-    // assert property (E2E_JAL_NEXT_VALID_INST_IS_CORRECT);
+    e2e_jal_pc_jump_correct :
+    assert property (E2E_JAL_NEXT_VALID_INST_IS_CORRECT);
 
-    // e2e_jal_rd :
-    // assert property (E2E_JAL_RD);
+    e2e_jal_rd :
+    assert property (E2E_JAL_RD);
 
-    // e2e_jal_we1 :
-    // assert property (E2E_JAL_WE1);
+    e2e_jal_we1 :
+    assert property (E2E_JAL_WE1);
 
     check_goto_meaning :
     assert property (@(posedge clk) disable iff (rst) (VALID_JAL) |->
