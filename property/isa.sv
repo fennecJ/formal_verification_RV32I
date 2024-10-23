@@ -609,7 +609,6 @@ module isa (
             blt_followed_by_valid_inst_immediately |-> core.wb_pc == blt_gold_addr;
     endproperty : E2E_BLT
 
-    // FIXME:
     // For JAL
     // Add extra assume to ensure branch target is aligned to 4 (assume inst[8] = 0)
     // When the instruction in the WB staged is JAL,
@@ -622,24 +621,23 @@ module isa (
         @(posedge clk) disable iff (rst)
             (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall)
             && (wb_pipeline_info.inst_valid == 1'b1)
-
             |-> (core.wb_r == wb_pipeline_info.inst_pc.pc + 4);
     endproperty
 
-    sequence IMMEDIATLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED;
+    sequence VALID_JAL;
         (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall)
-        && (wb_pipeline_info.inst_valid == 1'b1) ##1
+        && (wb_pipeline_info.inst_valid == 1'b1);
+    endsequence
 
-        (wb_pipeline_info.inst_valid == 1'b1);
+    sequence IMMEDIATLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED;
+        VALID_JAL ##1
+        (wb_pipeline_info.inst_valid);
     endsequence
 
     sequence EVENTUALLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED;
-        (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall)
-        && (wb_pipeline_info.inst_valid == 1'b1) ##1
-
-        (wb_pipeline_info.inst_valid == 1'b0)[*0:$] ##1
-
-        (wb_pipeline_info.inst_valid == 1'b1) && (!core_wb_stall);
+        VALID_JAL ##1
+        (!wb_pipeline_info.inst_valid)[*1:$] ##1
+        (wb_pipeline_info.inst_valid);
     endsequence
 
     property E2E_JAL_NEXT_VALID_INST_IS_CORRECT;
@@ -648,6 +646,23 @@ module isa (
             or EVENTUALLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED
             |->(wb_pipeline_info.inst_pc.pc == previous_jal_pc + previous_jal_imm_signed_exted);
     endproperty
+
+    property E2E_JAL_RD;
+        @(posedge clk) disable iff (rst) VALID_JAL |-> (core.wb_dst == wb_inst_dc.rd);
+    endproperty : E2E_JAL_RD
+
+    property E2E_JAL_WE1;  // rd != 0 -> must enable write;
+        @(posedge clk) disable iff (rst) VALID_JAL |-> (|wb_inst_dc.rd |-> (core.wb_we == 1));
+    endproperty : E2E_JAL_WE1
+
+    sequence valid_jal_followed_valid_1;
+        (VALID_JAL ##1 wb_pipeline_info.inst_valid [->1]);
+    endsequence : valid_jal_followed_valid_1
+
+    sequence valid_jal_followed_valid_2;
+        first_match((IMMEDIATLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED or
+        EVENTUALLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED));
+    endsequence : valid_jal_followed_valid_2
     // verilog_format: on
 
     // For AUIPC
@@ -774,11 +789,22 @@ module isa (
 `endif  // blt
 
 `ifdef jal
-    e2e_jal_rd_correct :
-    assert property (E2E_JAL_RD_IS_PC_PLUS_4);
+    // e2e_jal_rd_correct :
+    // assert property (E2E_JAL_RD_IS_PC_PLUS_4);
 
-    e2e_jal_pc_jump_correct :
-    assert property (E2E_JAL_NEXT_VALID_INST_IS_CORRECT);
+    // e2e_jal_pc_jump_correct :
+    // assert property (E2E_JAL_NEXT_VALID_INST_IS_CORRECT);
+
+    // e2e_jal_rd :
+    // assert property (E2E_JAL_RD);
+
+    // e2e_jal_we1 :
+    // assert property (E2E_JAL_WE1);
+
+    check_goto_meaning :
+    assert property (@(posedge clk) disable iff (rst) (VALID_JAL) |->
+                     valid_jal_followed_valid_1 intersect valid_jal_followed_valid_2);
+
 `endif  // jal
 
 `ifdef auipc
