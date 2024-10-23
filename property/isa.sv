@@ -533,7 +533,6 @@ module isa (
             blt_trigger |-> ##[1:20] wb_pipeline_info.inst_pc.pc == blt_gold_addr;
     endproperty : E2E_BLT
 
-    // FIXME:
     // For JAL
     // Add extra assume to ensure branch target is aligned to 4 (assume inst[8] = 0)
     // When the instruction in the WB staged is JAL,
