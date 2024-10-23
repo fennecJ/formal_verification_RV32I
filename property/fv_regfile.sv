@@ -49,7 +49,7 @@ module fv_regfile
     endsequence
 
     sequence eventually_not_id_stall_when_read_x0(rsd_t rf_src_i);
-        ~pd_stall_i ##1 (id_stall_i[*0:$]) ##1 (~id_stall_i && (rf_src_i == zero));
+        ~pd_stall_i ##1 (id_stall_i[*1:$]) ##1 (~id_stall_i && (rf_src_i == zero));
     endsequence
 
     sequence exist_not_id_stall_when_read_x0(rsd_t rf_src_i);
@@ -63,7 +63,7 @@ module fv_regfile
     endsequence
 
     sequence eventually_not_id_stall_when_read_others(rsd_t rf_src_i);
-        ~pd_stall_i ##1 (id_stall_i[*0:$]) ##1 (~id_stall_i && (rf_src_i != zero));
+        ~pd_stall_i ##1 (id_stall_i[*1:$]) ##1 (~id_stall_i && (rf_src_i != zero));
     endsequence
 
     sequence exist_not_id_stall_when_read_others(rsd_t rf_src_i);
