@@ -475,31 +475,45 @@ module isa (
             (wb_pipeline_info.bubble == core.wb_insn.bubble);
     endproperty
 
+    // verilog_format: off
     property CHECK_INST_VALID_ASSUME;
-        @(posedge clk) disable iff (rst) if_inst[6:0] == 7'b0110111 ||  // LUI
+        @(posedge clk) disable iff (rst)
+        if_inst[6:0] == 7'b0110111 ||  // LUI
         if_inst[6:0] == 7'b0010111 ||  // AUIPC
-        (if_inst[6:0] == 7'b1101111) ||  // JAL
-        (if_inst[6:0] == 7'b1100111) ||  // JALR
-
-        (if_inst[6:0] == 7'b1100011  // B-type (Branch)
-        && if_inst[14:12] != 3'b010 && if_inst[14:12] != 3'b011 && if_inst[8] == 1'h0) ||
-            (if_inst[6:0] == 7'b0000011  // L-type
-        && if_inst[14:12] != 3'b011 && if_inst[14:12] != 3'b110 && if_inst[14:12] != 3'b111) ||
-            (if_inst[6:0] == 7'b0100011  // S-type
+        if_inst[6:0] == 7'b1101111 ||  // JAL
+        if_inst[6:0] == 7'b1100111 ||  // JALR
+        // B-type (Branch)
+        (if_inst[6:0] == 7'b1100011 && if_inst[14:12] != 3'b010
+        && if_inst[14:12] != 3'b011 && if_inst[8] == 1'h0) ||
+        // L-type
+        (if_inst[6:0] == 7'b0000011 && if_inst[14:12] != 3'b011
+        && if_inst[14:12] != 3'b110 && if_inst[14:12] != 3'b111) ||
+        // S-type
+        (if_inst[6:0] == 7'b0100011
         && (if_inst[14:12] == 3'b000 || if_inst[14:12] == 3'b001 || if_inst[14:12] == 3'b010)) ||
-            (if_inst[6:0] == 7'b0010011  // I-type 1
-        && if_inst[14:12] != 3'b001 && if_inst[14:12] != 3'b101) ||
-            (if_inst[6:0] == 7'b0010011  // I-type 2 (logit shift)
-        && if_inst[31:25] == 7'd000 && (if_inst[14:12] == 3'b001 || if_inst[14:12] == 3'b101)) ||
-            (if_inst[6:0] == 7'b0010011  // I-type 3 (arith shift)
-        && if_inst[31:25] == 7'b0100000 && if_inst[14:12] == 3'b101) ||
-            (if_inst[6:0] == 7'b0110011  // R-type 1
-        && if_inst[31:25] == 7'd000) || (if_inst[6:0] == 7'b0110011  // R-type 2
-        && if_inst[31:25] == 7'b0100000 && (if_inst[14:12] == 3'b101 || if_inst[14:12] == 3'b000))
-            || (if_inst[6:0] == 7'b0001111  // FENCE
-        && if_inst[14:12] == 3'b000) || (if_inst[6:0] == 7'b1110011  // ECALL, EBREAK
-        && if_inst[19:7] == 13'b0 && (if_inst[31:20] == 12'd0 || if_inst[31:20] == 12'd1));
+        // I-type 1
+        (if_inst[6:0] == 7'b0010011 && if_inst[14:12] != 3'b001 && if_inst[14:12] != 3'b101) ||
+        // I-type 2 (logit shift)
+        (if_inst[6:0] == 7'b0010011 && if_inst[31:25] == 7'd000
+        && (if_inst[14:12] == 3'b001 || if_inst[14:12] == 3'b101)) ||
+        // I-type 3 (arith shift)
+        (if_inst[6:0] == 7'b0010011 && if_inst[31:25] == 7'b0100000 && if_inst[14:12] == 3'b101) ||
+        // R-type 1
+        (if_inst[6:0] == 7'b0110011 && if_inst[31:25] == 7'd000) ||
+        // R-type 2
+        (if_inst[6:0] == 7'b0110011 && if_inst[31:25] == 7'b0100000
+        && (if_inst[14:12] == 3'b101 || if_inst[14:12] == 3'b000)) ||
+        // FENCE
+        // FENCE.I 32'b0000????????_00000_000_00000_0001111
+        // FCENCE  32'b000000000000_00000_001_00000_0001111
+        (if_inst[6:0] == 7'b0001111 && ({if_inst[31:28], if_inst[19:13], if_inst[11:7]} == 0)
+        && (if_inst[12] == 0 || // FENCE.I
+        (if_inst[12] == 1 && if_inst[27:20] == 0))) || // FCENCE
+        // ECALL, EBREAK
+        (if_inst[6:0] == 7'b1110011 && if_inst[19:7] == 13'b0
+        && (if_inst[31:20] == 12'd0 || if_inst[31:20] == 12'd1));
     endproperty
+    // verilog_format: on
 
     // Here, we have split the check for reg[rd] = rs1 ^ imm
     // into two independent properties. By doing this,
