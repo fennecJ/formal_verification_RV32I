@@ -6,7 +6,8 @@
 */
 
 module fv_regfile
-    import riscv_opcodes_pkg::*;
+    import riscv_opcodes_pkg::rsd_t;
+    import riscv_opcodes_pkg::zero;
 (
     // Common input
     input clk,

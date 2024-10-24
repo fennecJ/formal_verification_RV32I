@@ -636,7 +636,7 @@ module isa (
 
 `ifdef RegFileStable
     // Import necessary package
-    import riscv_opcodes_pkg::*;
+    import riscv_opcodes_pkg::rsd_t;
 
     // DUV's regfile signal
     logic [31:0] rf          [32];
