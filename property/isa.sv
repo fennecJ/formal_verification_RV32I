@@ -801,7 +801,7 @@ module isa (
     e2e_jal_we1 :
     assert property (E2E_JAL_WE1);
 
-    check_goto_meaning :
+    check_jal_coverage :
     assert property (@(posedge clk) disable iff (rst) (VALID_JAL) |->
                      valid_jal_followed_valid_1 intersect valid_jal_followed_valid_2);
 
