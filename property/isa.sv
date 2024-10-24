@@ -642,6 +642,37 @@ module isa (
         @(posedge clk) disable iff (rst) wb_pipeline_info.inst_valid == 0 |-> core.wb_we == 0;
     endproperty : INVALID_NO_WEN
 
+    logic valid_non_branch;
+    logic [31:0] last_pc;
+    assign valid_non_branch = (!(wb_inst_dc.opcode inside {OPC_JAL, OPC_JALR, OPC_B})) &&
+        wb_pipeline_info.inst_valid;
+    always_ff @(posedge clk) begin
+        if (valid_non_branch) last_pc <= wb_pipeline_info.inst_pc.pc;
+    end
+
+    sequence non_branch_followed_by_invalid_then_valid;
+        valid_non_branch ##1
+        // inst is not valid for 1~$(any numbers) consecutive cycles
+        ((wb_pipeline_info.inst_valid == 0) [* 1: $])
+        // then one cycle after, there is a valid inst
+        ##1 wb_pipeline_info.inst_valid == 1;
+    endsequence : non_branch_followed_by_invalid_then_valid
+
+    sequence non_branch_followed_by_valid_immediately;
+        valid_non_branch ##1 wb_pipeline_info.inst_valid == 1;
+    endsequence : non_branch_followed_by_valid_immediately
+
+    // When there is no branch inst, next valid inst's pc should always incresed by 4
+    property PC_INC4_WHEN_NO_BRANCH;
+        @(posedge clk) disable iff (rst)
+            non_branch_followed_by_invalid_then_valid or non_branch_followed_by_valid_immediately
+            |-> wb_pipeline_info.inst_pc.pc == last_pc + 32'd4;
+    endproperty : PC_INC4_WHEN_NO_BRANCH
+
+`ifdef PC_INC4_NO_BRANCH
+    pc_inc4_no_branch :
+    assert property (PC_INC4_WHEN_NO_BRANCH);
+`endif  // PC_INC4_NO_BRANCH
 
 `ifdef CheckInstValidAssume
     instValidCheck :

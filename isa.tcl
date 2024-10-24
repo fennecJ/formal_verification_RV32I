@@ -39,13 +39,14 @@ proc setCheckFlag {flagName flagValue} {
 setCheckFlag "CheckInstValidAssume" 0
 setCheckFlag "RegFileStable" 0
 setCheckFlag "PipeFollower" 0
+setCheckFlag "PC_INC4_NO_BRANCH" 0
 setCheckFlag "ISA_GROUP_A" 1
     # Following Flag works only when "ISA_GROUP_A" set to 1
     setCheckFlag "xori" 0
     setCheckFlag "lb" 0
-    setCheckFlag "blt" 1
+    setCheckFlag "blt" 0
     setCheckFlag "jal" 0
-    setCheckFlag "auipc" 0
+    setCheckFlag "auipc" 1
 
 eval $ANALYZE_COMMAND
 
