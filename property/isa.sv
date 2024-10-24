@@ -619,13 +619,13 @@ module isa (
     // verilog_format: off
     property E2E_JAL_RD_IS_PC_PLUS_4;
         @(posedge clk) disable iff (rst)
-            (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall)
+            (wb_inst_dc.opcode == OPC_JAL)
             && (wb_pipeline_info.inst_valid == 1'b1)
             |-> (core.wb_r == wb_pipeline_info.inst_pc.pc + 4);
     endproperty
 
     sequence VALID_JAL;
-        (wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall)
+        (wb_inst_dc.opcode == OPC_JAL)
         && (wb_pipeline_info.inst_valid == 1'b1);
     endsequence
 
