@@ -320,8 +320,7 @@ module isa (
             previous_jal_pc  <= 32'd0;
             previous_jal_imm <= 21'd0;
         end else begin
-            if ((wb_inst_dc.opcode == OPC_JAL) && (!core_wb_stall) &&
-                (wb_pipeline_info.bubble == 1'b0)) begin
+            if ((wb_inst_dc.opcode == OPC_JAL) && (wb_pipeline_info.inst_valid)) begin
                 previous_jal_pc  <= wb_pipeline_info.inst_pc.pc;
                 previous_jal_imm <= wb_inst_dc.imm21_j;
             end
@@ -652,9 +651,10 @@ module isa (
     endproperty : E2E_JAL_RD
 
     property E2E_JAL_WE1;  // rd != 0 -> must enable write;
-        @(posedge clk) disable iff (rst) VALID_JAL |-> (|wb_inst_dc.rd |-> (core.wb_we == 1));
+        @(posedge clk) disable iff (rst) VALID_JAL && (|wb_inst_dc.rd)  |-> (core.wb_we == 1);
     endproperty : E2E_JAL_WE1
 
+    // [->x] goto : means that goto the x-th time the sequence is pulled up.
     sequence valid_jal_followed_valid_1;
         (VALID_JAL ##1 wb_pipeline_info.inst_valid [->1]);
     endsequence : valid_jal_followed_valid_1
@@ -801,6 +801,7 @@ module isa (
     e2e_jal_we1 :
     assert property (E2E_JAL_WE1);
 
+    // a intersect b : it means that a and b will have the same starting point and endpoint
     check_jal_coverage :
     assert property (@(posedge clk) disable iff (rst) (VALID_JAL) |->
                      valid_jal_followed_valid_1 intersect valid_jal_followed_valid_2);
