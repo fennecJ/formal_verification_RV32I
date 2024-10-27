@@ -311,6 +311,22 @@ module isa (
     end
 
     // JAL
+    logic [31:0] previous_jal_pc;
+    logic [20:0] previous_jal_imm;
+    logic [31:0] previous_jal_imm_signed_exted;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            previous_jal_pc  <= 32'd0;
+            previous_jal_imm <= 21'd0;
+        end else begin
+            if ((wb_inst_dc.opcode == OPC_JAL) && (wb_pipeline_info.inst_valid)) begin
+                previous_jal_pc  <= wb_pipeline_info.inst_pc.pc;
+                previous_jal_imm <= wb_inst_dc.imm21_j;
+            end
+        end
+    end
+    assign previous_jal_imm_signed_exted = {{11{previous_jal_imm[20]}}, previous_jal_imm};
 
     // AUIPC
     logic auipc_trigger;
@@ -606,7 +622,6 @@ module isa (
             blt_followed_by_valid_inst_immediately |-> core.wb_pc == blt_gold_addr;
     endproperty : E2E_BLT
 
-    // FIXME:
     // For JAL
     // Add extra assume to ensure branch target is aligned to 4 (assume inst[8] = 0)
     // When the instruction in the WB staged is JAL,
@@ -614,6 +629,55 @@ module isa (
     // |->  ##[1: $] inst's pc == taken_pc
     // result to be write back should be WB's pc + 4
     // |->  ##[1: $] reg[rd] should be same as result
+    // verilog_format: off
+    property E2E_JAL_RD_IS_PC_PLUS_4;
+        @(posedge clk) disable iff (rst)
+            (wb_inst_dc.opcode == OPC_JAL)
+            && (wb_pipeline_info.inst_valid == 1'b1)
+            |-> (core.wb_r == wb_pipeline_info.inst_pc.pc + 4);
+    endproperty
+
+    sequence VALID_JAL;
+        (wb_inst_dc.opcode == OPC_JAL)
+        && (wb_pipeline_info.inst_valid == 1'b1);
+    endsequence
+
+    sequence IMMEDIATLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED;
+        VALID_JAL ##1
+        (wb_pipeline_info.inst_valid);
+    endsequence
+
+    sequence EVENTUALLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED;
+        VALID_JAL ##1
+        (!wb_pipeline_info.inst_valid)[*1:$] ##1
+        (wb_pipeline_info.inst_valid);
+    endsequence
+
+    property E2E_JAL_NEXT_VALID_INST_IS_CORRECT;
+        @(posedge clk) disable iff (rst)
+            IMMEDIATLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED
+            or EVENTUALLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED
+            |->(wb_pipeline_info.inst_pc.pc == previous_jal_pc + previous_jal_imm_signed_exted);
+    endproperty
+
+    property E2E_JAL_RD;
+        @(posedge clk) disable iff (rst) VALID_JAL |-> (core.wb_dst == wb_inst_dc.rd);
+    endproperty : E2E_JAL_RD
+
+    property E2E_JAL_WE1;  // rd != 0 -> must enable write;
+        @(posedge clk) disable iff (rst) VALID_JAL && (|wb_inst_dc.rd)  |-> (core.wb_we == 1);
+    endproperty : E2E_JAL_WE1
+
+    // [->x] goto : means that goto the x-th time the sequence is pulled up.
+    sequence valid_jal_followed_valid_1;
+        (VALID_JAL ##1 wb_pipeline_info.inst_valid [->1]);
+    endsequence : valid_jal_followed_valid_1
+
+    sequence valid_jal_followed_valid_2;
+        first_match((IMMEDIATLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED or
+        EVENTUALLY_FIRST_VALID_INST_AFTER_JAL_CAPTURED));
+    endsequence : valid_jal_followed_valid_2
+    // verilog_format: on
 
     // For AUIPC
     // When the instruction in the WB staged is AUIPC
@@ -740,7 +804,6 @@ module isa (
 `endif  // PipeFollower
 
 
-
 `ifdef ISA_GROUP_A
     /* FIXME: add other isa for group A [XORI, BLT, JAL, LB, AUIPC] */
     invalid_no_wen :
@@ -769,6 +832,26 @@ module isa (
     e2e_blt :
     assert property (E2E_BLT);
 `endif  // blt
+
+`ifdef jal
+    e2e_jal_rd_correct :
+    assert property (E2E_JAL_RD_IS_PC_PLUS_4);
+
+    e2e_jal_pc_jump_correct :
+    assert property (E2E_JAL_NEXT_VALID_INST_IS_CORRECT);
+
+    e2e_jal_rd :
+    assert property (E2E_JAL_RD);
+
+    e2e_jal_we1 :
+    assert property (E2E_JAL_WE1);
+
+    // a intersect b : it means that a and b will have the same starting point and endpoint
+    check_jal_coverage :
+    assert property (@(posedge clk) disable iff (rst) (VALID_JAL) |->
+                     valid_jal_followed_valid_1 intersect valid_jal_followed_valid_2);
+
+`endif  // jal
 
 `ifdef auipc
     e2e_auipc_pre_wb :
