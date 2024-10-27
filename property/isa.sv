@@ -9,7 +9,7 @@ typedef enum logic [6:0] {
     OPC_JAL   = 7'b1101111,
     OPC_LUI   = 7'b0110111,
     OPC_AUIPC = 7'b0010111,
-    OPC_FENCE = 7'b0001111,  // FENCE, FENCE.TSO, PAUSE
+    OPC_FENCE = 7'b0001111,  // FENCE, FENCE.I
     OPC_E     = 7'b1110011   // ECALL, EBREAK
 } opcode_t;
 
@@ -222,17 +222,16 @@ module isa (
         if (rst) ex_bubble_misc <= 1'b1;
         else if (!core_ex_stall) ex_bubble_misc <= id_pipeline_info.bubble;
         // 0 means valid here (no bubble)
-        // only when (there is no bubble from id) and (inst from id is valid) then we can set to valid (0)
-        // However, we have assumed that all inst should be validInst, thus there is no need for checking
-        // if inst valid. Original logic is
+        // only when (there is no bubble from id) and (inst from id is valid RV32I inst) then we
+        // can set to valid (0) However, we have assumed that all inst should be validInst, thus
+        // there is no need for checking if inst valid. Original logic is
         // ex_bubble_misc <= (!id_pipeline_info.bubble && is_validInst(id_pipeline_info.inst_pc.inst)) ? 1'b0 : 1'b1;
-        // Which can be simply to ex_bubble_misc <= id_pipeline_info.bubble; when is_validInst is always hold.
+        // Which can be simplify to ex_bubble_misc <= id_pipeline_info.bubble; when is_validInst is always hold.
     end
 
     assign if_inst = core.if_unit.rv_instr;  //! use imem_parcel_i instead?
 
     // Directly follow the logic in core.if_unit
-
     always_comb begin
         if (rst) if_pc = PC_INIT;
         // if_pc will never be du_dato_i (with assume no_dbg_change_pc)
@@ -665,7 +664,8 @@ module isa (
     endproperty : E2E_JAL_RD
 
     property E2E_JAL_WE1;  // rd != 0 -> must enable write;
-        @(posedge clk) disable iff (rst) VALID_JAL && (|wb_inst_dc.rd)  |-> (core.wb_we == 1);
+        @(posedge clk) disable iff (rst) VALID_JAL.triggered && (|wb_inst_dc.rd) |->
+        (core.wb_we == 1);
     endproperty : E2E_JAL_WE1
 
     // [->x] goto : means that goto the x-th time the sequence is pulled up.
