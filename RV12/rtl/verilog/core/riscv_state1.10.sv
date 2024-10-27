@@ -797,8 +797,10 @@ generate
           else if ( (ex_csr_we_i && ex_csr_reg_i == MINSTRETH && st_prv_o == PRV_M) ||
                     (du_we_csr_i && du_addr_i    == MINSTRETH)  )
             csr.minstret.h <= csr_wval;
-          else if   (!wb_insn_i.bubble)
-            csr.minstret <= csr.minstret + 'h1;
+          else
+            csr.minstret <= csr.minstret + wb_insn_i.retired;
+          // else if   (!wb_insn_i.bubble)
+            // csr.minstret <= csr.minstret + 'h1;
       end
   end
   else //(XLEN > 32)

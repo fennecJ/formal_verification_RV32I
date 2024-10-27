@@ -142,11 +142,33 @@ import biu_constants_pkg::*;
   logic [EXCEPTION_SIZE-1:0] bu_exception;
   interrupts_exceptions_t    lsu_exceptions;
 
+  // For inst retired
+  logic bu_bubble_exe;
+  logic bu_bubble_id;
+  opcR_t                   opcR;
+  always @(posedge clk_i, negedge rst_ni)
+    if      (!rst_ni                ) bu_bubble_exe <= 1'b1;
+    else if ( ex_exceptions_o.any  ||
+              mem_exceptions_i.any ||
+              wb_exceptions_i.any   ) bu_bubble_exe <= 1'b1;
+    else if (!ex_stall_o            ) bu_bubble_exe <= bu_bubble_id | id_insn_i.bubble;
+
+  assign opcR    = decode_opcR(id_insn_i.instr);
+
+  always_comb begin
+      if(opcR.opcode inside {JAL, JALR, BEQ, BNE, BLTU, BGEU, BLT, BGE})
+        bu_bubble_id = 1'b0;
+      else if(id_insn_i.instr inside{FENCE_I, FENCE, ECALL, EBREAK})
+        bu_bubble_id = 1'b0;
+      else 
+        bu_bubble_id = 1'b1; // inst doesn't take effect on branch unit
+  end
+  
 
   ////////////////////////////////////////////////////////////////
   //
   // Module Body
-  //
+  //  
 
   /*
    * Program Counter
@@ -293,7 +315,6 @@ import biu_constants_pkg::*;
     .mem_exceptions_i       ( mem_exceptions_i       ),
     .wb_exceptions_i        ( wb_exceptions_i        ),
     .bu_exceptions_o        ( ex_exceptions_o        ),
-
     .opA_i                  ( opA                    ),
     .opB_i                  ( opB                    ) );
 
@@ -361,6 +382,7 @@ endgenerate
    */
 
   assign ex_insn_o.bubble = alu_bubble & lsu_bubble & mul_bubble & div_bubble;
+  assign ex_insn_o.retired = ~(alu_bubble & lsu_bubble & bu_bubble_exe & mul_bubble & div_bubble);
   assign ex_stall_o       = mem_stall_i | lsu_stall | mul_stall | div_stall;
 
   //result

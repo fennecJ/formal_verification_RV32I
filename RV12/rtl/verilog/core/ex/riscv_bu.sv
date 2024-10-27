@@ -104,12 +104,13 @@ import riscv_state_pkg::*;
                            bp_update;
   logic [BP_GLOBAL_BITS:0] bp_history;
   logic [XLEN        -1:0] nxt_pc;
-
-
+  logic bu_bubble;
   ////////////////////////////////////////////////////////////////
   //
   // Module Body
   //
+
+
 
   /*
    * Instruction
@@ -175,6 +176,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = id_pc_i + ext_immUJ;
+                          bu_bubble     = 1'b0;
                       end
       {1'b0,JALR   }: if (has_rsb)
                       begin
@@ -186,6 +188,7 @@ import riscv_state_pkg::*;
                           dc_clean      = 'b0;
 
                           nxt_pc        = (opA_i + opB_i) & { {XLEN-1{1'b1}},1'b0 };
+                          bu_bubble     = 1'b0;
                           pipeflush     = is_ret ?  (nxt_pc[XLEN-1:1] != id_rsb_pc_i[XLEN-1:1]) : 1'b1;
                       end
                       else
@@ -198,6 +201,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = (opA_i + opB_i) & { {XLEN-1{1'b1}},1'b0 };
+                          bu_bubble     = 1'b0;
                       end
       {1'b0,BEQ    }: begin
                           btaken        = (opA_i == opB_i);
@@ -208,6 +212,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = btaken ? id_pc_i + ext_immSB : id_pc_i +(is_16bit_instruction ? 'h2 : 'h4);
+                          bu_bubble     = 1'b0;
                       end
       {1'b0,BNE    }: begin
                           btaken        = (opA_i != opB_i);
@@ -218,6 +223,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = btaken ? id_pc_i + ext_immSB : id_pc_i + (is_16bit_instruction ? 'h2 : 'h4);
+                          bu_bubble     = 1'b0;
                        end
       {1'b0,BLTU   }: begin
                           btaken        = (opA_i < opB_i);
@@ -228,6 +234,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = btaken ? id_pc_i + ext_immSB : id_pc_i + 'h4;
+                          bu_bubble     = 1'b0;
                       end
       {1'b0,BGEU   }: begin
                           btaken        = (opA_i >= opB_i);
@@ -238,6 +245,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = btaken ? id_pc_i + ext_immSB : id_pc_i +'h4;
+                          bu_bubble     = 1'b0;
                       end
       {1'b0,BLT    }: begin
                           btaken        = $signed(opA_i) <  $signed(opB_i); 
@@ -248,6 +256,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = btaken ? id_pc_i + ext_immSB : id_pc_i + 'h4;
+                          bu_bubble     = 1'b0;
                       end
       {1'b0,BGE    }: begin
                           btaken        = $signed(opA_i) >= $signed(opB_i);
@@ -258,6 +267,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = btaken ? id_pc_i + ext_immSB : id_pc_i + 'h4;
+                          bu_bubble     = 1'b0;
                       end
       {1'b0,MISCMEM}: case (id_insn_i.instr)
                          FENCE_I: begin
@@ -269,7 +279,8 @@ import riscv_state_pkg::*;
                                       dc_invalidate = 'b0;
                                       dc_clean      = 'b1;
                                       nxt_pc        = id_pc_i +'h4;
-                                  end
+                                      bu_bubble     = 1'b0;
+                        end
                          default: begin
                                       btaken        = 'b0;
                                       bp_update     = 'b0;
@@ -279,7 +290,8 @@ import riscv_state_pkg::*;
                                       dc_invalidate = 'b0;
                                       dc_clean      = 'b0;
                                       nxt_pc        = id_pc_i + 'h4;
-                                   end
+                                      bu_bubble     = 1'b1;
+                        end
                       endcase
       default       : begin
                           btaken        = 'b0;
@@ -290,6 +302,7 @@ import riscv_state_pkg::*;
                           dc_invalidate = 'b0;
                           dc_clean      = 'b0;
                           nxt_pc        = id_pc_i + (is_16bit_instruction ? 'h2 : 'h4);
+                          bu_bubble     = 1'b1;
                       end
     endcase
 
