@@ -75,13 +75,13 @@ module fv_regfile
     //////////////////// Assertion ////////////////////
     property write_correct(logic [31:0] duv_rf, rsd_t rf_dst, logic [4:0] rf_index);
         @(posedge clk) disable iff (rst)
-        ~(pd_stall_i | id_stall_i) && (rf_dst == rf_index) && rf_we_i
+        (rf_dst == rf_index) && rf_we_i
         |=> ($past(rf_dst_d_i) == duv_rf);
     endproperty
 
     property reg_stable(logic [31:0] duv_rf, rsd_t rf_dst, logic [4:0] rf_index);
         @(posedge clk) disable iff (rst)
-        ~(pd_stall_i | id_stall_i) && (rf_dst != rf_index) && rf_we_i
+        (rf_dst != rf_index) && rf_we_i
         |=> $stable(duv_rf);
     endproperty
 
