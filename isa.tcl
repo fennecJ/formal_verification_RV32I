@@ -37,7 +37,7 @@ proc setCheckFlag {flagName flagValue} {
 
 # set check flag
 setCheckFlag "CheckInstValidAssume" 0
-setCheckFlag "RegFileStable" 0
+setCheckFlag "RegFile" 0
 setCheckFlag "PipeFollower" 0
 setCheckFlag "PC_INC4_NO_BRANCH" 0
 setCheckFlag "ISA_GROUP_A" 1

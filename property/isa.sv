@@ -743,7 +743,7 @@ module isa (
     assert property (CHECK_INST_VALID_ASSUME);
 `endif  // CheckInstValidAssume
 
-`ifdef RegFileStable
+`ifdef RegFile
     // Import necessary package
     import riscv_opcodes_pkg::rsd_t;
 
@@ -786,7 +786,7 @@ module isa (
         .pd_stall_i(pd_stall_i),
         .id_stall_i(id_stall_i)
     );
-`endif  // RegFileStable
+`endif  // RegFile
 
 `ifdef PipeFollower
     IfToPd :
