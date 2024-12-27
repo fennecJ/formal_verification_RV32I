@@ -259,7 +259,7 @@ module isa (
 
     // xori
     logic [31:0] xori_result;
-    assign xori_result = (wb_rs1) ^ ({20'h0, wb_inst_dc.imm12_i});
+    assign xori_result = wb_rs1 ^ {{20{wb_inst_dc.imm12_i[11]}}, wb_inst_dc.imm12_i};
     logic xori_trigger;
     assign xori_trigger = ((wb_inst_dc.opcode == OPC_I) && (wb_inst_dc.funct3 == XORI)) &&
         wb_pipeline_info.inst_valid;
