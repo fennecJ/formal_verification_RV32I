@@ -1,74 +1,33 @@
+# An SVA(system verilog assertion) based formal verification example on RV12 with a subset of RV32I ISA
+
+This project implements an end-to-end verification[^1] approach for a CPU based on the RV32I ISA specification.
+
+The CPU under test is a modified version of an older commit from the [RV12](https://github.com/RoaLogic/RV12) repository, included here under Roa Logic's Non-Commercial License Agreement for educational and research purposes.  
+
+Verification focuses on a subset of RV32I instructions: `XORI`, `BLT`, `JAL`, `LB`, and `AUIPC`, representing the five main
+instruction types (`I`, `B`, `J`, `L`, and `U`). Other instructions within the same type can likely be handled by referencing these examples.
+
+**Running Formal Verification with JasperGold**
+
+To perform formal verification with SystemVerilog Assertions, we use Cadence's JasperGold Formal Engine to execute our test suite, with TCL script `isa.tcl`.
+
+## Detailed of implementation and result
+The implementation can be find in directory `property`.
+Details of our design considerations and implementation thoughts are discussed in [Report.md](./Report.md).
+
 ## Contribution Guide
+Refer to [Contribute.md](./Contribute.md) if you want to contribute to this repo
 
-This repository uses [Verible](https://github.com/chipsalliance/verible) as a linter and formatter to maintain code quality.
+## License
 
-### Getting Started
+This repository contains code under multiple licenses:
 
-To contribute, you will need to install Verible. The recommended approach is to install the pre-built binary:
+1. **Roa Logic Code**  
+   Portions of this repository include code sourced from Roa Logic, which is distributed under their Non-Commercial License Agreement. These parts are strictly for non-commercial purposes. See [`ROA_LOGIC_LICENSE.md`](./RV12/ROA_LOGIC_LICENSE.md) for details.
 
-1. Navigate to the directory where you want to install Verible:
-   ```bash
-   cd "$DIR_YOU_WANT_INSTALL_VERIBLE"
-   ```
+2. **MIT License**  
+   All other parts of the code are licensed under the MIT License. See [`MIT_LICENSE.md`](./property/MIT_LICENSE.md) for details.
 
-2. Download the pre-built binary:
-   ```bash
-   wget https://github.com/chipsalliance/verible/releases/download/v0.0-3824-g14eed6a0/verible-v0.0-3824-g14eed6a0-linux-static-x86_64.tar.gz
-   ```
+If you intend to use this repository, please ensure compliance with the respective licenses.
 
-3. Extract the downloaded file:
-   ```bash
-   tar -zxvf verible-v0.0-3824-g14eed6a0-linux-static-x86_64.tar.gz
-   ```
-
-4. Add Verible to your `PATH` by updating your `~/.bashrc` file:
-   ```bash
-   export PATH=$DIR_YOU_WANT_INSTALL_VERIBLE/verible-v0.0-3824-g14eed6a0/bin:$PATH
-   ```
-
-### Setting up Pre-commit Hooks
-
-This project also uses `pre-commit` to enforce code standards. Follow these steps to set it up:
-
-1. Install `pre-commit` using pip:
-   ```bash
-   pip install pre-commit
-   ```
-
-2. Clone the repository and navigate to the project directory:
-   ```bash
-   git clone https://github.com/fennecJ/formal_RV12
-   cd formal_RV12
-   ```
-
-3. Install the pre-commit hooks:
-   ```bash
-   pre-commit install
-   ```
-
-### Formatting and Linting Before Committing
-
-Before committing your changes, ensure your code is properly formatted and free of linting issues by running the following commands:
-
-1. To format the source code, run:
-   ```bash
-   verible-verilog-format --flagfile=.verible-format-flags --inplace property/isa.sv
-   ```
-
-2. To check for linting issues, run:
-   ```bash
-   verible-verilog-lint --rules_config=.verible.rules property/isa.sv
-   # There should be no output if no linting issues are found.
-   ```
-
-Once these steps are complete and there are no issues, you're ready to contribute!
-
-### Disabling Format for Specific Code Blocks
-
-If you prefer to retain your custom code style in certain sections, you can instruct the formatter to ignore specific code blocks by using the following annotations:
-
-```verilog
-// verilog_format: off
-// Your custom code here...
-// verilog_format: on
-```
+[^1]: [End-to-End Verification of ARM Processors with ISA-Formal](https://alastairreid.github.io/papers/cav2016_isa_formal.pdf)
