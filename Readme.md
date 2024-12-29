@@ -23,10 +23,11 @@ Refer to [Contribute.md](./Contribute.md) if you want to contribute to this repo
 This repository contains code under multiple licenses:
 
 1. **Roa Logic Code**  
-   Portions of this repository include code sourced from Roa Logic, which is distributed under their Non-Commercial License Agreement. These parts are strictly for non-commercial purposes. See [`ROA_LOGIC_LICENSE.md`](./RV12/ROA_LOGIC_LICENSE.md) for details.
+   Portions of this repository include code from Roa Logic, specifically under the `RV12/` directory. These files are distributed under Roa Logic's Non-Commercial License Agreement and are strictly for non-commercial use. For more details, refer to [`ROA_LOGIC_LICENSE.md`](./RV12/ROA_LOGIC_LICENSE.md).
+
 
 2. **MIT License**  
-   All other parts of the code are licensed under the MIT License. See [`MIT_LICENSE.md`](./property/MIT_LICENSE.md) for details.
+   All other parts of the code are licensed under the MIT License. See [`MIT_LICENSE.md`](./property/MIT_License.md) for details.
 
 If you intend to use this repository, please ensure compliance with the respective licenses.
 
