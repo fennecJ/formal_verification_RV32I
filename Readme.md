@@ -1,4 +1,4 @@
-# An SVA(system verilog assertion) based formal verification example on RV12 with a subset of RV32I ISA
+# An SVA(SystemVerilog Assertion) based formal verification example on RV12 with a subset of RV32I ISA
 
 This project implements an end-to-end verification[^1] approach for a CPU based on the RV32I ISA specification.
 
